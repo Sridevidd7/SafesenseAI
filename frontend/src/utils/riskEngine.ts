@@ -1,4 +1,4 @@
-import { SafetyReport, ReportAnalysis, RiskLevel, SIFPotential, RiskFactor } from '../types';
+import { SafetyReport, ReportAnalysis, RiskLevel, SIFPotential, RiskFactor, SiteRisk, ActivityRisk, SafetyPattern } from '../types';
 
 // ─── Life-Saving Rules ────────────────────────────────────────────────────────
 const LSR_RULES: Record<string, { keywords: string[]; description: string }> = {
@@ -99,12 +99,20 @@ export function detectLSR(text: string): string {
   return best;
 }
 
-export function detectBarrierFailure(text: string): string {
+export function detectBarriers(text: string): string[] {
   const lower = textLower(text);
+  const matched: string[] = [];
   for (const [barrier, patterns] of Object.entries(BARRIER_PATTERNS)) {
-    if (patterns.some(p => lower.includes(p))) return barrier;
+    if (patterns.some(p => lower.includes(p))) {
+      matched.push(barrier);
+    }
   }
-  return 'Unknown Barrier Failure';
+  return matched;
+}
+
+export function detectBarrierFailure(text: string): string {
+  const barriers = detectBarriers(text);
+  return barriers.length > 0 ? barriers[0] : 'Unknown Barrier Failure';
 }
 
 export function detectHazard(text: string): string {
@@ -146,8 +154,8 @@ export function extractEvidencePhrases(text: string): string[] {
     'without isolation', 'lockout', 'tagout', 'live circuit', 'energized',
     'without harness', 'no fall protection', 'welding', 'hot work', 'grinding',
     'without fire watch', 'exclusion zone', 'suspended load', 'without seat belt',
-    'chemical', 'acid', 'chlorine', 'pressurized', 'without standby',
-    'fire suppression disabled', 'detector covered', 'without ppe',
+    'chemical', 'acid', 'chlorine', 'pressurized', 'without standby', 'no standby',
+    'fire suppression disabled', 'detector covered', 'without ppe', 'not wearing ppe',
     'atmospheric testing', 'gas detector', 'scaffold not inspected',
   ];
 
@@ -165,66 +173,269 @@ export function extractEvidencePhrases(text: string): string[] {
     }
   }
 
-  return [...new Set(evidence)].slice(0, 6);
+  return [...new Set(evidence)].slice(0, 8);
+}
+
+// ─── Negation & Context Patterns ──────────────────────────────────────────────
+
+export type NegationType = 'UNSAFE_VIOLATION' | 'SAFE_PREVENTIVE' | 'AMBIGUOUS' | 'NONE';
+
+export interface NegationAnalysisResult {
+  negationType: NegationType;
+  preventivePhrase: string | null;
+  barrierPhrase: string | null;
+  ambiguousPhrase?: string | null;
+  interpretation: string;
+  scoreImpact: string;
+}
+
+const PREVENTIVE_STOP_REGEX = /\b(?:(?:did\s+not|didn't|does\s+not|doesn't|would\s+not|wouldn't|refused\s+to|decided\s+not\s+to|opted\s+not\s+to|declined\s+to)\s+(?:proceed|enter|start|commence|work|operate|continue|execute|climb|step|go\s+into|begin|resume)|(?:work|job|entry|task|operation|activity|maintenance|welding|lifting|pour|process)\s+(?:was\s+)?(?:stopped|halted|suspended|aborted|cancelled|put\s+on\s+hold|paused|delayed|refused|prevented|ceased)|stopped(?:\s+(?:work|entry|task|job|activity|operation|hot\s+work|maintenance|welding|climbing))?|halted(?:\s+(?:work|entry|task|job|activity|operation))?|aborted(?:\s+(?:entry|operation|task|job|activity))?|suspended(?:\s+(?:work|entry|task|job|activity|operation))?|avoided(?:\s+(?:entering|working|climbing|proceeding|operating|starting|entry|work))?|refused(?:\s+(?:to\s+enter|to\s+work|to\s+proceed|to\s+climb|to\s+start|entry))?|intervened\s+and\s+stopped|held\s+back\s+from|stayed\s+back\s+from)\b/i;
+
+const NEGATED_STOP_REGEX = /\b(?:did\s+not|didn't|failed\s+to|refused\s+to|could\s+not)\s+(?:stop|halt|abort|suspend|cease)\b/i;
+
+const NEGATED_BARRIER_REGEX = /\b(?:(?:without|with\s+no|no|missing|lack\s+of|absence\s+of|failed\s+to\s+(?:conduct|perform|obtain|wear|apply|use))\s+(?:gas\s+test(?:ing)?|atmospheric\s+test(?:ing)?|permit(?: to work)?|ptw|authorization|isolation|lockout|tagout|loto|harness|fall\s+protection|fall\s+arrest|ppe|safety\s+glasses|gloves|helmet|mask|respirator|fire\s+watch|standby(?:\s+person)?|attendant|ventilation|guardrail|earthing|grounding|chock|banksman)|(?:gas\s+test(?:ing)?|permit|ptw|authorization|isolation|lockout|tagout|loto|harness|fall\s+protection|ppe|fire\s+watch|standby|attendant|ventilation|guardrail)\s+(?:was\s+|were\s+)?(?:not\s+(?:done|obtained|conducted|applied|completed|issued|available|present|worn|used|carried\s+out|tested|performed))|not\s+wearing\s+(?:ppe|harness|helmet|gloves|safety\s+glasses|mask|respirator|protection|seat\s*belt)|not\s+(?:tested|isolated|depressurized|grounded|authorized|inspected))\b/i;
+
+const AMBIGUOUS_INDICATORS = /\b(?:unclear\s+(?:if|whether)|not\s+confirmed\s+(?:if|whether)|possibly|may\s+have|while\s+inspecting|inspection\s+only|started\s+(?:then|and\s+then)\s+stopped|entered\s+(?:then|and\s+then)\s+stopped)\b/i;
+
+export function analyzeNegationContext(text: string): NegationAnalysisResult {
+  const lower = text.toLowerCase().trim();
+  if (!lower) {
+    return {
+      negationType: 'NONE',
+      preventivePhrase: null,
+      barrierPhrase: null,
+      interpretation: 'Empty or neutral text.',
+      scoreImpact: 'Standard baseline scoring.',
+    };
+  }
+
+  const stopMatch = lower.match(PREVENTIVE_STOP_REGEX);
+  const negatedStopMatch = lower.match(NEGATED_STOP_REGEX);
+  const barrierMatch = lower.match(NEGATED_BARRIER_REGEX);
+  const ambiguousMatch = lower.match(AMBIGUOUS_INDICATORS);
+
+  if (ambiguousMatch) {
+    return {
+      negationType: 'AMBIGUOUS',
+      preventivePhrase: stopMatch ? stopMatch[0] : null,
+      barrierPhrase: barrierMatch ? barrierMatch[0] : null,
+      ambiguousPhrase: ambiguousMatch[0],
+      interpretation: `Ambiguous scenario detected ('${ambiguousMatch[0]}'). Exposure or execution status is uncertain.`,
+      scoreImpact: 'Risk score held at moderate level (MEDIUM, ~45); flagged for supervisor review.',
+    };
+  }
+
+  if (negatedStopMatch && barrierMatch) {
+    return {
+      negationType: 'UNSAFE_VIOLATION',
+      preventivePhrase: null,
+      barrierPhrase: barrierMatch[0],
+      interpretation: `Active violation: Failed/refused to stop despite missing control ('${barrierMatch[0]}').`,
+      scoreImpact: 'Risk score increased (+25 barrier penalty) and SIF potential flagged YES due to active execution without safety barrier.',
+    };
+  }
+
+  if (stopMatch && !negatedStopMatch) {
+    const stopPhrase = stopMatch[0];
+    const barrierPhrase = barrierMatch ? barrierMatch[0] : 'missing safety requirement';
+    return {
+      negationType: 'SAFE_PREVENTIVE',
+      preventivePhrase: stopPhrase,
+      barrierPhrase: barrierPhrase,
+      interpretation: `Safe preventive decision: Work was proactively stopped/avoided ('${stopPhrase}') due to '${barrierPhrase}'.`,
+      scoreImpact: 'Risk score reduced to LOW (13-20) and SIF potential nullified because proactive intervention prevented hazard exposure.',
+    };
+  }
+
+  if (barrierMatch) {
+    return {
+      negationType: 'UNSAFE_VIOLATION',
+      preventivePhrase: null,
+      barrierPhrase: barrierMatch[0],
+      interpretation: `Unsafe condition / barrier violation: Activity performed or attempted without required control ('${barrierMatch[0]}').`,
+      scoreImpact: 'Risk score increased (+25 barrier penalty) and SIF potential flagged YES due to active execution without safety barrier.',
+    };
+  }
+
+  return {
+    negationType: 'NONE',
+    preventivePhrase: null,
+    barrierPhrase: null,
+    interpretation: 'Standard report: No critical negation or stop-work patterns detected.',
+    scoreImpact: 'Scored using standard rule weights.',
+  };
+}
+
+export function calculateConfidence(
+  text: string,
+  lsr: string,
+  barrierFailures: string[],
+  negType: NegationType,
+  evidence: string[]
+): {
+  confidence: number;
+  confidenceLevel: 'HIGH' | 'MEDIUM' | 'LOW';
+  reasons: string[];
+} {
+  const lower = text.toLowerCase().trim();
+  const words = lower.split(/\s+/).filter(Boolean);
+  const wordCount = words.length;
+
+  let score = 0.50;
+  const reasons: string[] = [];
+
+  // 1. LSR alignment
+  let lsrHits = 0;
+  if (lsr !== 'General Safety' && LSR_RULES[lsr]) {
+    lsrHits = LSR_RULES[lsr].keywords.filter(k => lower.includes(k)).length;
+  }
+
+  if (lsrHits >= 2) {
+    score += 0.15;
+    reasons.push(`Strong Life-Saving Rule alignment (${lsrHits} keywords for '${lsr}')`);
+  } else if (lsrHits === 1) {
+    score += 0.08;
+    reasons.push(`Explicit Life-Saving Rule detected ('${lsr}')`);
+  } else {
+    score -= 0.05;
+    reasons.push('General safety context without specific Life-Saving Rule match');
+  }
+
+  // 2. Barrier Match Density
+  const nBarriers = barrierFailures.length;
+  if (nBarriers >= 2) {
+    score += 0.15;
+    reasons.push(`${nBarriers} explicit barrier failures detected`);
+  } else if (nBarriers === 1) {
+    score += 0.10;
+    reasons.push(`1 explicit barrier failure detected ('${barrierFailures[0]}')`);
+  } else {
+    score -= 0.05;
+    reasons.push('No standard barrier patterns matched');
+  }
+
+  // 3. Evidence phrase support
+  if (evidence.length >= 2) {
+    score += 0.05;
+  }
+
+  // 4. Sentence Structure Clarity
+  const hasRole = /\b(worker|workers|technician|technicians|operator|operators|crew|team|electrician|welder|supervisor|contractor|personnel)\b/i.test(lower);
+  const hasAction = /\b(entered|proceeded|working|climbed|welding|operating|started|stopped|halted|avoided|refused|conducted|performed|inspected)\b/i.test(lower);
+
+  if (hasRole && hasAction) {
+    score += 0.10;
+    reasons.push('Clear actor and operational action structure');
+  } else if (hasAction || hasRole) {
+    score += 0.05;
+    reasons.push('Identified operational context');
+  }
+
+  // 5. Ambiguity & Conflicting Signals
+  if (negType === 'AMBIGUOUS' || AMBIGUOUS_INDICATORS.test(lower)) {
+    score -= 0.35;
+    reasons.push('Ambiguous or conflicting signals present');
+  } else if (negType === 'SAFE_PREVENTIVE' || negType === 'UNSAFE_VIOLATION') {
+    score += 0.05;
+    reasons.push(`Unambiguous negation intent (${negType})`);
+  }
+
+  if (wordCount < 4) {
+    score -= 0.20;
+    reasons.push('Fragmented / brief sentence structure');
+  }
+
+  const confidence = Number(Math.min(0.98, Math.max(0.20, score)).toFixed(2));
+  const confidenceLevel = confidence >= 0.80 ? 'HIGH' : confidence >= 0.50 ? 'MEDIUM' : 'LOW';
+
+  return {
+    confidence,
+    confidenceLevel,
+    reasons,
+  };
 }
 
 export function calculateRiskScore(report: Partial<SafetyReport>): {
   score: number;
   level: RiskLevel;
+  barrierFailures: string[];
   factors: RiskFactor[];
+  negation: NegationAnalysisResult;
 } {
   const text = (report.report_text || '').toLowerCase();
   const lsr = report.life_saving_rule || detectLSR(text);
-  const barrier = report.barrier_failure || detectBarrierFailure(text);
+  const barrierFailures = detectBarriers(text);
   const severity = (report.severity || '').toLowerCase();
   const reportType = (report.report_type || '').toLowerCase();
 
-  // Factor: Hazard Severity (0–30)
+  const negation = analyzeNegationContext(text);
+  const nBarriers = barrierFailures.length;
+
   let hazardSeverity = 15;
-  if (severity.includes('critical') || lsr !== 'General Safety') hazardSeverity = 28;
-  else if (severity.includes('high')) hazardSeverity = 22;
-  else if (severity.includes('medium')) hazardSeverity = 14;
-  else if (severity.includes('low')) hazardSeverity = 6;
-
-  // Factor: Barrier Failure (0–25)
   let barrierScore = 5;
-  if (barrier !== 'Unknown Barrier Failure') {
-    barrierScore = 22;
-    if (barrier.includes('Not Completed') || barrier.includes('Not Applied') || barrier.includes('Not Obtained')) {
-      barrierScore = 25;
-    }
-  }
-
-  // Factor: Exposure (0–20)
   let exposureScore = 8;
-  if (text.includes('worker') || text.includes('technician') || text.includes('operator')) exposureScore = 16;
-  if (text.includes('two worker') || text.includes('crew') || text.includes('multiple')) exposureScore = 20;
-
-  // Factor: Activity Criticality (0–10)
-  const criticalActivities = ['Confined Space', 'Energy Isolation', 'Hot Work', 'Working at Height'];
   let activityScore = 5;
-  if (criticalActivities.some(a => text.includes(a.toLowerCase()) || lsr.includes(a))) activityScore = 10;
-
-  // Factor: Recurrence (0–15)
   let recurrenceScore = 5;
-  if (reportType.includes('incident')) recurrenceScore = 15;
-  else if (reportType.includes('near miss')) recurrenceScore = 12;
-  else if (reportType.includes('unsafe act')) recurrenceScore = 10;
-  else if (reportType.includes('unsafe condition')) recurrenceScore = 8;
-
-  const total = Math.min(100, hazardSeverity + barrierScore + exposureScore + activityScore + recurrenceScore);
-
+  let total = 0;
   let level: RiskLevel = 'LOW';
-  if (total > 80) level = 'CRITICAL';
-  else if (total > 60) level = 'HIGH';
-  else if (total > 30) level = 'MEDIUM';
+
+  if (negation.negationType === 'SAFE_PREVENTIVE') {
+    hazardSeverity = lsr !== 'General Safety' ? 10 : 5;
+    barrierScore = 0;
+    exposureScore = 2;
+    activityScore = 2;
+    recurrenceScore = 4;
+    total = hazardSeverity + barrierScore + exposureScore + activityScore + recurrenceScore;
+    level = 'LOW';
+  } else if (negation.negationType === 'AMBIGUOUS') {
+    hazardSeverity = lsr !== 'General Safety' ? 18 : 10;
+    barrierScore = nBarriers > 0 ? Math.min(20, 12 + Math.max(0, nBarriers - 1) * 4) : 12;
+    exposureScore = 10;
+    activityScore = 5;
+    recurrenceScore = 5;
+    total = hazardSeverity + barrierScore + exposureScore + activityScore + recurrenceScore;
+    level = 'MEDIUM';
+  } else {
+    if (severity.includes('critical') || lsr !== 'General Safety') hazardSeverity = 28;
+    else if (severity.includes('high')) hazardSeverity = 22;
+    else if (severity.includes('medium')) hazardSeverity = 14;
+    else if (severity.includes('low')) hazardSeverity = 6;
+
+    // Multi-barrier penalty: 25 for first barrier, +5 for each additional barrier, capped at 35
+    if (nBarriers === 0) {
+      barrierScore = negation.negationType === 'UNSAFE_VIOLATION' ? 25 : 5;
+    } else if (nBarriers === 1) {
+      barrierScore = 25;
+    } else {
+      barrierScore = Math.min(35, 25 + (nBarriers - 1) * 5);
+    }
+
+    if (text.includes('worker') || text.includes('technician') || text.includes('operator')) exposureScore = 16;
+    if (text.includes('two worker') || text.includes('crew') || text.includes('multiple')) exposureScore = 20;
+
+    const criticalActivities = ['Confined Space', 'Energy Isolation', 'Hot Work', 'Working at Height'];
+    if (criticalActivities.some(a => text.includes(a.toLowerCase()) || lsr.includes(a))) activityScore = 10;
+
+    if (reportType.includes('incident')) recurrenceScore = 15;
+    else if (reportType.includes('near miss')) recurrenceScore = 12;
+    else if (reportType.includes('unsafe act')) recurrenceScore = 10;
+    else if (reportType.includes('unsafe condition')) recurrenceScore = 8;
+
+    total = Math.min(100, hazardSeverity + barrierScore + exposureScore + activityScore + recurrenceScore);
+    if (total > 80) level = 'CRITICAL';
+    else if (total > 60) level = 'HIGH';
+    else if (total > 30) level = 'MEDIUM';
+    else level = 'LOW';
+  }
 
   return {
     score: total,
     level,
+    barrierFailures,
+    negation,
     factors: [
       { name: 'Hazard Severity', score: hazardSeverity, max_score: 30, description: 'Based on severity classification and life-saving rule category.' },
-      { name: 'Barrier Failure', score: barrierScore, max_score: 25, description: 'Whether a required safety control was absent or failed.' },
+      { name: 'Barrier Failure', score: barrierScore, max_score: nBarriers > 1 ? 35 : 25, description: 'Whether required safety controls were absent, breached, or prevented.' },
       { name: 'Exposure', score: exposureScore, max_score: 20, description: 'Number of persons exposed to the hazardous condition.' },
       { name: 'Activity Criticality', score: activityScore, max_score: 10, description: 'Whether the activity falls under a critical life-saving rule.' },
       { name: 'Recurrence Weight', score: recurrenceScore, max_score: 15, description: 'Report type — incidents and near-misses indicate higher potential.' },
@@ -234,6 +445,14 @@ export function calculateRiskScore(report: Partial<SafetyReport>): {
 
 export function determineSIFPotential(text: string, riskScore: number, lsr: string): SIFPotential {
   const lower = textLower(text);
+  const negation = analyzeNegationContext(text);
+
+  if (negation.negationType === 'SAFE_PREVENTIVE') {
+    return 'NO';
+  }
+  if (negation.negationType === 'AMBIGUOUS') {
+    return 'UNKNOWN';
+  }
 
   // Hard YES conditions
   const sifKeywords = [
@@ -241,7 +460,7 @@ export function determineSIFPotential(text: string, riskScore: number, lsr: stri
     'energized', 'live circuit', 'without harness', 'suspended load',
     'line of fire', 'exclusion zone', 'chemical exposure', 'toxic gas',
     'oxygen deficient', 'pressurized', 'fire suppression disabled',
-    'hot work', 'without permit'
+    'hot work', 'without permit', 'no permit', 'not wearing', 'no standby',
   ];
   const hasSIFKeyword = sifKeywords.some(k => lower.includes(k));
 
@@ -327,17 +546,44 @@ export function generateRecommendedActions(lsr: string, barrier: string, activit
 export function analyzeReport(report: Partial<SafetyReport>): ReportAnalysis {
   const text = report.report_text || '';
   const lsr = report.life_saving_rule || detectLSR(text);
-  const barrier = report.barrier_failure || detectBarrierFailure(text);
+  const barrierFailures = detectBarriers(text);
+  const primaryBarrier = barrierFailures.length > 0 ? barrierFailures[0] : 'Unknown Barrier Failure';
   const hazard = detectHazard(text);
   const activity = detectActivity(text, report.activity);
   const evidence = extractEvidencePhrases(text);
-  const { score, level, factors } = calculateRiskScore({ ...report, life_saving_rule: lsr, barrier_failure: barrier });
+  const { score, level, factors, negation } = calculateRiskScore({ ...report, life_saving_rule: lsr });
   const sif = report.sif_potential || determineSIFPotential(text, score, lsr);
-  const actions = report.recommended_action
-    ? [report.recommended_action]
-    : generateRecommendedActions(lsr, barrier, activity);
+  const confResult = calculateConfidence(text, lsr, barrierFailures, negation.negationType, evidence);
 
-  const explanation = buildExplanation(text, lsr, barrier, hazard, score, level, sif);
+  let actions: string[];
+  if (report.recommended_action) {
+    actions = [report.recommended_action];
+  } else if (negation.negationType === 'SAFE_PREVENTIVE') {
+    actions = [
+      'Log positive safety intervention / near-miss report.',
+      'Complete required barrier control (e.g. gas testing, permit, isolation) before authorizing work.',
+      'Verify all pre-entry and isolation checklists are formally signed off.',
+      'Brief the crew on safe work procedures prior to resumption.',
+    ];
+  } else {
+    actions = generateRecommendedActions(lsr, primaryBarrier, activity);
+  }
+
+  const displayBarriers = negation.negationType === 'SAFE_PREVENTIVE' && barrierFailures.length > 0
+    ? barrierFailures.map(b => `Prevented: ${b}`)
+    : (barrierFailures.length > 0 ? barrierFailures : ['Unknown Barrier Failure']);
+
+  const explanation = buildExplanation(
+    text,
+    lsr,
+    displayBarriers,
+    hazard,
+    score,
+    level,
+    sif,
+    negation,
+    confResult
+  );
 
   return {
     sif_potential: sif,
@@ -345,7 +591,11 @@ export function analyzeReport(report: Partial<SafetyReport>): ReportAnalysis {
     risk_score: score,
     activity_detected: activity,
     hazard_detected: hazard,
-    barrier_failure: barrier,
+    barrier_failure: displayBarriers[0],
+    barrier_failures: displayBarriers,
+    confidence: confResult.confidence,
+    confidence_level: confResult.confidenceLevel,
+    negation_type: negation.negationType,
     life_saving_rule: lsr,
     evidence_phrases: evidence,
     explanation,
@@ -359,33 +609,47 @@ export function analyzeReport(report: Partial<SafetyReport>): ReportAnalysis {
 function buildExplanation(
   text: string,
   lsr: string,
-  barrier: string,
+  barriers: string[],
   hazard: string,
   score: number,
   level: RiskLevel,
-  sif: SIFPotential
+  sif: SIFPotential,
+  negation: NegationAnalysisResult,
+  confidenceData: { confidence: number; confidenceLevel: string; reasons: string[] }
 ): string {
   const parts: string[] = [];
 
-  if (sif === 'YES') {
-    parts.push(`This report describes a situation with elevated SIF potential (Serious Injury or Fatality precursor).`);
+  if (negation.negationType === 'SAFE_PREVENTIVE') {
+    parts.push(`SAFE PREVENTIVE DECISION: Worker/team took proactive action ('${negation.preventivePhrase}') when '${negation.barrierPhrase}' was detected.`);
+    parts.push(`Risk score reduced to ${score}/100 (${level}) and SIF potential is NO because hazard exposure was averted.`);
+    if (barriers.length > 0) {
+      parts.push(`Addressed barriers: ${barriers.join(', ')}.`);
+    }
+  } else if (negation.negationType === 'AMBIGUOUS') {
+    parts.push(`AMBIGUOUS SCENARIO: Detected potential barrier deficiency (${barriers.join(', ')}) with unclear operational exposure ('${negation.ambiguousPhrase}').`);
+    parts.push(`Risk score evaluated at ${score}/100 (${level}). Supervisor verification required.`);
+  } else {
+    if (sif === 'YES') {
+      parts.push(`This report describes a situation with elevated SIF potential (Serious Injury or Fatality precursor).`);
+    }
+
+    if (lsr !== 'General Safety') {
+      const rule = LSR_RULES[lsr];
+      parts.push(`The activity falls under the "${lsr}" life-saving rule. ${rule?.description || ''}`);
+    }
+
+    if (barriers.length > 0 && barriers[0] !== 'Unknown Barrier Failure') {
+      parts.push(`Detected ${barriers.length} critical safety barrier failure(s): ${barriers.join(', ')}. (First barrier penalty: +25, additional: +${Math.max(0, (barriers.length - 1) * 5)}).`);
+    }
+
+    if (hazard !== 'General Hazard') {
+      parts.push(`The primary hazard type detected is "${hazard}".`);
+    }
+
+    parts.push(`The risk engine assigned a score of ${score}/100 (${level}) based on active exposure without required controls.`);
   }
 
-  if (lsr !== 'General Safety') {
-    const rule = LSR_RULES[lsr];
-    parts.push(`The activity falls under the "${lsr}" life-saving rule. ${rule?.description || ''}`);
-  }
-
-  if (barrier !== 'Unknown Barrier Failure') {
-    parts.push(`A critical safety barrier was identified as failed or absent: "${barrier}". This significantly increases the potential severity of the situation.`);
-  }
-
-  if (hazard !== 'General Hazard') {
-    parts.push(`The primary hazard type detected is "${hazard}".`);
-  }
-
-  parts.push(`The prototype risk engine assigned a score of ${score}/100 (${level}). This is calculated from hazard severity, barrier failure, exposure, activity criticality, and report type weighting.`);
-  parts.push(`⚠ This is a prototype rule-based analysis. Final safety decisions must be made by qualified HSE personnel.`);
+  parts.push(`Confidence: ${confidenceData.confidence} (${confidenceData.confidenceLevel}) based on ${confidenceData.reasons.join('; ')}.`);
 
   return parts.join(' ');
 }
@@ -433,7 +697,7 @@ export function computeSiteRisk(reports: SafetyReport[]) {
       top_precursor: topActivity,
       top_barrier_failure: topBarrier,
       risk_score: riskScore,
-      trend: 'stable' as const,
+      trend: 'stable' as SiteRisk['trend'],
     };
   }).sort((a, b) => b.risk_score - a.risk_score);
 }
@@ -462,7 +726,7 @@ export function computeActivityRisk(reports: SafetyReport[]) {
       sif_count: sifCount,
       avg_risk_score: avgScore,
       top_barrier_failure: topBarrier,
-      trend: 'stable' as const,
+      trend: 'stable' as ActivityRisk['trend'],
       risk_level: riskLevel,
     };
   }).sort((a, b) => b.sif_count - a.sif_count);
@@ -502,7 +766,7 @@ export function computePatterns(reports: SafetyReport[]) {
         risk_level: riskLevel,
         sites,
         activities,
-        trend: 'stable' as const,
+        trend: 'stable' as SafetyPattern['trend'],
         description: `Recurring pattern: ${name}. Found in ${rs.length} reports across ${sites.length} site(s).`,
         report_ids: rs.map(r => r.id),
       };

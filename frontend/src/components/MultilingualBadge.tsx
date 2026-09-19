@@ -1,4 +1,4 @@
-import { DetectedLanguage, LANGUAGE_DISPLAY, LANGUAGE_FLAG } from '../types';
+import { DetectedLanguage, LANGUAGE_DISPLAY, LANGUAGE_FLAG, MultilingualStats } from '../types';
 import { Languages, AlertCircle, ArrowRightLeft } from 'lucide-react';
 
 // ─── Language Badge ───────────────────────────────────────────────────────────
@@ -10,14 +10,14 @@ interface LanguageBadgeProps {
 
 export function LanguageBadge({ language, size = 'md', showFlag = true }: LanguageBadgeProps) {
   const sizeClass = size === 'sm'
-    ? 'px-1.5 py-0.5 text-xs'
+    ? 'px-2 py-0.5 text-xs'
     : 'px-2.5 py-0.5 text-xs';
 
   const colorClass: Record<DetectedLanguage, string> = {
-    en: 'bg-blue-500/15 text-blue-300 border border-blue-500/30',
-    kn: 'bg-orange-500/15 text-orange-300 border border-orange-500/30',
-    hi: 'bg-green-500/15 text-green-300 border border-green-500/30',
-    unknown: 'bg-slate-500/15 text-slate-400 border border-slate-500/30',
+    en: 'bg-blue-50 text-blue-700 border border-blue-200',
+    kn: 'bg-orange-50 text-orange-700 border border-orange-200',
+    hi: 'bg-green-50 text-green-700 border border-green-200',
+    unknown: 'bg-slate-100 text-slate-600 border border-slate-200',
   };
 
   return (
@@ -42,11 +42,11 @@ export function TranslationBadge({
   method,
   size = 'md',
 }: TranslationBadgeProps) {
-  const sizeClass = size === 'sm' ? 'px-1.5 py-0.5 text-xs' : 'px-2.5 py-0.5 text-xs';
+  const sizeClass = size === 'sm' ? 'px-2 py-0.5 text-xs' : 'px-2.5 py-0.5 text-xs';
 
   if (translationError) {
     return (
-      <span className={`inline-flex items-center gap-1 rounded-full font-medium ${sizeClass} bg-red-500/15 text-red-400 border border-red-500/30`}>
+      <span className={`inline-flex items-center gap-1 rounded-full font-medium ${sizeClass} bg-red-50 text-red-700 border border-red-200`}>
         <AlertCircle className="w-3 h-3" />
         Translation unavailable
       </span>
@@ -55,24 +55,22 @@ export function TranslationBadge({
 
   if (!isTranslated) {
     return (
-      <span className={`inline-flex items-center gap-1 rounded-full font-medium ${sizeClass} bg-slate-500/15 text-slate-400 border border-slate-500/30`}>
+      <span className={`inline-flex items-center gap-1 rounded-full font-medium ${sizeClass} bg-slate-100 text-slate-600 border border-slate-200`}>
         Original
       </span>
     );
   }
 
   return (
-    <span className={`inline-flex items-center gap-1 rounded-full font-medium ${sizeClass} bg-violet-500/15 text-violet-300 border border-violet-500/30`}>
+    <span className={`inline-flex items-center gap-1 rounded-full font-medium ${sizeClass} bg-indigo-50 text-indigo-700 border border-indigo-200`}>
       <ArrowRightLeft className="w-3 h-3" />
       Translated
-      {method === 'offline_dict' && <span className="opacity-60">(dict)</span>}
+      {method === 'offline_dict' && <span className="opacity-70">(dict)</span>}
     </span>
   );
 }
 
 // ─── Multilingual Stats Card ──────────────────────────────────────────────────
-import { MultilingualStats } from '../types';
-
 interface MultilingualStatsBannerProps {
   stats: MultilingualStats;
 }
@@ -83,14 +81,14 @@ export function MultilingualStatsBanner({ stats }: MultilingualStatsBannerProps)
   const hasNonEnglish = stats.kannada > 0 || stats.hindi > 0;
 
   return (
-    <div className="card border-violet-500/20 bg-violet-900/5 animate-in">
+    <div className="card border-indigo-200 bg-indigo-50/30 animate-in">
       <div className="flex items-start gap-3 mb-4">
-        <div className="w-8 h-8 rounded-lg bg-violet-600/20 border border-violet-500/30 flex items-center justify-center flex-shrink-0">
-          <Languages className="w-4 h-4 text-violet-400" />
+        <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center flex-shrink-0 text-indigo-600">
+          <Languages className="w-4 h-4" />
         </div>
         <div>
-          <h3 className="font-semibold text-white text-sm">Multilingual Processing</h3>
-          <p className="text-slate-400 text-xs mt-0.5">
+          <h3 className="font-bold text-slate-900 text-sm">Multilingual Processing</h3>
+          <p className="text-slate-500 text-xs mt-0.5">
             Language detection and translation complete
           </p>
         </div>
@@ -99,21 +97,21 @@ export function MultilingualStatsBanner({ stats }: MultilingualStatsBannerProps)
       {/* Language breakdown */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
         {[
-          { label: 'Total Reports', value: stats.total, color: 'text-white' },
-          { label: 'English',        value: stats.english,  color: 'text-blue-400' },
-          { label: 'Kannada',        value: stats.kannada,  color: 'text-orange-400' },
-          { label: 'Hindi',          value: stats.hindi,    color: 'text-green-400' },
+          { label: 'Total Reports', value: stats.total, color: 'text-slate-900' },
+          { label: 'English',       value: stats.english, color: 'text-blue-600' },
+          { label: 'Kannada',       value: stats.kannada, color: 'text-orange-600' },
+          { label: 'Hindi',         value: stats.hindi,   color: 'text-green-600' },
         ].map(item => (
-          <div key={item.label} className="bg-slate-800/60 rounded-lg px-3 py-2 text-center">
+          <div key={item.label} className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-center shadow-xs">
             <div className={`text-xl font-bold ${item.color}`}>{item.value}</div>
-            <div className="text-xs text-slate-500 mt-0.5">{item.label}</div>
+            <div className="text-xs text-slate-500 font-medium mt-0.5">{item.label}</div>
           </div>
         ))}
       </div>
 
       {/* Status checklist */}
       <div className="space-y-1.5">
-        <StatusLine ok={true}  text="Language detected for all reports" />
+        <StatusLine ok={true} text="Language detected for all reports" />
         <StatusLine ok={hasNonEnglish && stats.translate_enabled}
                     na={!hasNonEnglish}
                     text={
@@ -154,7 +152,7 @@ function StatusLine({
     );
   }
   return (
-    <div className={`flex items-start gap-2 text-xs ${ok ? 'text-green-400' : 'text-red-400'}`}>
+    <div className={`flex items-start gap-2 text-xs font-medium ${ok ? 'text-green-700' : 'text-red-700'}`}>
       <span className="flex-shrink-0 mt-0.5">{ok ? '✓' : '✗'}</span>
       {text}
     </div>
@@ -179,32 +177,32 @@ export function TranslationReveal({
 }: TranslationRevealProps) {
   if (!isTranslated) {
     return (
-      <p className="text-slate-300 text-sm leading-relaxed">{originalText}</p>
+      <p className="text-slate-800 text-sm leading-relaxed">{originalText}</p>
     );
   }
 
   return (
     <div className="space-y-2">
       {/* Original */}
-      <div className="bg-slate-800/50 rounded-lg px-3 py-2">
+      <div className="bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-2.5">
         <div className="flex items-center gap-2 mb-1">
           <LanguageBadge language={language} size="sm" />
-          <span className="text-xs text-slate-500">Original</span>
+          <span className="text-xs text-slate-500 font-medium">Original</span>
         </div>
-        <p className="text-slate-300 text-sm leading-relaxed">{originalText}</p>
+        <p className="text-slate-700 text-sm leading-relaxed">{originalText}</p>
       </div>
       {/* Translated */}
-      <div className="bg-slate-800/50 rounded-lg px-3 py-2">
+      <div className="bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-2.5">
         <div className="flex items-center gap-2 mb-1">
           <LanguageBadge language="en" size="sm" />
-          <span className="text-xs text-slate-500">Translated (used for analysis)</span>
+          <span className="text-xs text-slate-500 font-medium">Translated (used for analysis)</span>
           {translationError && (
-            <span className="text-xs text-red-400 flex items-center gap-1">
+            <span className="text-xs text-red-600 font-semibold flex items-center gap-1">
               <AlertCircle className="w-3 h-3" /> {translationError}
             </span>
           )}
         </div>
-        <p className="text-slate-200 text-sm leading-relaxed">{translatedText}</p>
+        <p className="text-slate-900 text-sm leading-relaxed font-medium">{translatedText}</p>
       </div>
     </div>
   );

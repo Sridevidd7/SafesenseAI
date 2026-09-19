@@ -2,6 +2,7 @@ fastapi==0.104.1
 uvicorn[standard]==0.24.0
 python-multipart==0.0.6
 pydantic==2.5.0
+sqlalchemy==2.0.23
 pandas==2.1.3
 numpy==1.26.2
 scikit-learn==1.3.2
@@ -18,3 +19,6 @@ langdetect==1.0.9
 # Translation (uses Google Translate via free API — no key for basic use)
 # Swap for IndicTrans2 or another offline model in production
 deep-translator==1.11.4
+
+# ─── LLM Explanation Provider ───────────────────────────────────────────────
+groq>=0.9.0

@@ -80,6 +80,10 @@ export interface ReportAnalysis {
   activity_detected: string;
   hazard_detected: string;
   barrier_failure: string;
+  barrier_failures?: string[];
+  confidence?: number;
+  confidence_level?: 'HIGH' | 'MEDIUM' | 'LOW' | string;
+  negation_type?: string;
   life_saving_rule: string;
   evidence_phrases: string[];
   explanation: string;

@@ -1,0 +1,11 @@
+description,severity,report_type
+Worker entered confined space without completing gas testing and permit verification.,Critical,Near Miss
+Maintenance technician began electrical work on energized control panel without applying lockout tagout.,Critical,Unsafe Act
+Welding observed in hazardous area without a valid hot work permit. Flammable vapors detected nearby.,High,Unsafe Act
+Worker observed at 6-metre height without harness or fall-arrest equipment. No edge protection installed.,High,Near Miss
+Forklift operating in pedestrian walkway without segregation controls. Reversing alarms not functioning.,Medium,Unsafe Condition
+Near miss during crane lift: worker walked under suspended load. Exclusion zone had not been established.,Critical,Near Miss
+Chemical spill in storage area. No PPE available for cleanup crew. SDS not posted.,High,Incident
+Fire suppression system disabled for maintenance. No fire watch posted during hot work nearby.,Critical,Unsafe Act
+Scaffold not inspected before use. Worker climbed to roof level without toe boards or guardrails.,High,Unsafe Condition
+Vehicle reversing without banksman in pedestrian area. Speed limit signs obscured.,Medium,Unsafe Act

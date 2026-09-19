@@ -344,7 +344,7 @@ export function generateMultilingualCSV(): string {
   ];
   const rows = MULTILINGUAL_SAMPLE_REPORTS.map(r =>
     headers.map(h => {
-      const val = String((r as Record<string, unknown>)[h] ?? '');
+      const val = String((r as unknown as Record<string, unknown>)[h] ?? '');
       return `"${val.replace(/"/g, '""')}"`;
     }).join(',')
   );

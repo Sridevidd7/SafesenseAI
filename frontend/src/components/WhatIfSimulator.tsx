@@ -53,10 +53,10 @@ interface WhatIfSimulatorProps {
   originalScore: number;
   activity: string;
   lsr: string;
-  barrier: string;
+  barrier?: string;
 }
 
-export default function WhatIfSimulator({ originalScore, activity, lsr }: WhatIfSimulatorProps) {
+export default function WhatIfSimulator({ originalScore, lsr }: WhatIfSimulatorProps) {
   const controls = CONTROLS_BY_LSR[lsr] || DEFAULT_CONTROLS;
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [simulated, setSimulated] = useState<number | null>(null);
@@ -85,41 +85,41 @@ export default function WhatIfSimulator({ originalScore, activity, lsr }: WhatIf
   const reductionPct = simulated !== null ? Math.round((reduction / originalScore) * 100) : 0;
 
   return (
-    <div className="card border-violet-500/20 bg-violet-900/5 space-y-4">
+    <div className="card border-indigo-200 bg-indigo-50/30 space-y-4">
       <div className="flex items-center gap-2">
-        <Sliders className="w-5 h-5 text-violet-400" />
-        <h3 className="font-semibold text-white">Safety Control Impact Simulator</h3>
+        <Sliders className="w-5 h-5 text-indigo-600" />
+        <h3 className="font-bold text-slate-900 text-sm">Safety Control Impact Simulator</h3>
       </div>
 
-      <div className="flex items-center gap-2 text-xs text-slate-500 bg-slate-800/50 rounded-lg px-3 py-2">
-        <Info className="w-3.5 h-3.5 flex-shrink-0" />
+      <div className="flex items-center gap-2 text-xs text-slate-600 bg-white border border-slate-200 rounded-lg px-3 py-2">
+        <Info className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
         Prototype simulation — not a certified safety calculation. Demonstrates the potential effect of controls.
       </div>
 
-      <p className="text-sm text-slate-400">
+      <p className="text-sm text-slate-600">
         Select safety controls to see the estimated prototype risk score after implementation:
       </p>
 
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-2 gap-2.5">
         {controls.map(ctrl => (
           <label
             key={ctrl.id}
             className={`flex items-start gap-2.5 p-3 rounded-lg border cursor-pointer transition-all ${
               selected.has(ctrl.id)
-                ? 'border-green-500/50 bg-green-900/15'
-                : 'border-slate-600 hover:border-slate-500 bg-slate-800/50'
+                ? 'border-green-300 bg-green-50/70 shadow-xs'
+                : 'border-slate-200 hover:border-slate-300 bg-white'
             }`}
           >
             <input
               type="checkbox"
               checked={selected.has(ctrl.id)}
               onChange={() => toggle(ctrl.id)}
-              className="mt-0.5 accent-green-500 flex-shrink-0"
+              className="mt-0.5 accent-green-600 flex-shrink-0"
             />
             <div>
-              <div className="text-sm font-medium text-slate-200">{ctrl.label}</div>
-              <div className="text-xs text-slate-500">{ctrl.description}</div>
-              <div className="text-xs text-green-400 mt-0.5">-{ctrl.reduction} pts potential</div>
+              <div className="text-sm font-semibold text-slate-900">{ctrl.label}</div>
+              <div className="text-xs text-slate-500 mt-0.5">{ctrl.description}</div>
+              <div className="text-xs font-semibold text-green-700 mt-1">-{ctrl.reduction} pts potential</div>
             </div>
           </label>
         ))}
@@ -135,18 +135,18 @@ export default function WhatIfSimulator({ originalScore, activity, lsr }: WhatIf
       </button>
 
       {simulated !== null && (
-        <div className="flex items-center justify-around bg-slate-800 rounded-xl p-4 animate-in">
+        <div className="flex items-center justify-around bg-white border border-slate-200 rounded-xl p-4 shadow-sm animate-in">
           <div className="text-center">
-            <p className="text-xs text-slate-500 mb-1">Before Controls</p>
+            <p className="text-xs font-medium text-slate-500 mb-1">Before Controls</p>
             <RiskGauge score={originalScore} size={90} />
           </div>
           <div className="text-center px-4">
-            <TrendingDown className="w-8 h-8 text-green-400 mx-auto mb-1" />
-            <div className="text-green-400 font-bold text-lg">-{reductionPct}%</div>
-            <div className="text-xs text-slate-500">est. reduction</div>
+            <TrendingDown className="w-8 h-8 text-green-600 mx-auto mb-1" />
+            <div className="text-green-700 font-bold text-xl">-{reductionPct}%</div>
+            <div className="text-xs text-slate-500 font-medium">est. reduction</div>
           </div>
           <div className="text-center">
-            <p className="text-xs text-slate-500 mb-1">After Controls</p>
+            <p className="text-xs font-medium text-slate-500 mb-1">After Controls</p>
             <RiskGauge score={simulated} size={90} />
           </div>
         </div>
