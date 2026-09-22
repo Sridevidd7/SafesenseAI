@@ -276,7 +276,10 @@ export interface CopilotMessage {
   content: string;
   timestamp: string;
   source_reports?: string[];
+  model?: string;
+  isError?: boolean;
 }
+
 
 export interface KnowledgeNode {
   id: string;
