@@ -51,6 +51,8 @@ export interface SafetyReport {
   activity?: string;
   location?: string;
   site?: string;
+  unit?: string;
+  area?: string;
   date?: string;
   severity?: string;
   sif_potential?: SIFPotential;
@@ -58,6 +60,9 @@ export interface SafetyReport {
   risk_score?: number;
   life_saving_rule?: string;
   barrier_failure?: string;
+  pii_detected?: boolean;
+  pii_count?: number;
+  pii_types?: string;
   recommended_action?: string;
   analyzed?: boolean;
   analysis?: ReportAnalysis;
@@ -107,6 +112,10 @@ export interface ReportAnalysis {
   similar_report_ids: string[];
   pattern_name?: string;
   mode: 'rule-based' | 'ml' | string;
+  pii_detected?: boolean;
+  pii_count?: number;
+  pii_types?: string[];
+  redacted_text?: string;
 }
 
 
@@ -134,8 +143,10 @@ export interface ColumnMapping {
   severity?: string;
   report_type?: string;
   location?: string;
-  activity?: string;
   site?: string;
+  unit?: string;
+  area?: string;
+  activity?: string;
   date?: string;
   barrier_failure?: string;
   recommended_action?: string;
@@ -280,4 +291,68 @@ export interface KnowledgeLink {
   target: string;
   label?: string;
   weight?: number;
+}
+
+// ─── SIF Risk Concentration Heatmap Types ─────────────────────────────────────
+export type HeatmapRiskLevel = 'HIGH' | 'EMERGING' | 'MEDIUM' | 'LOW';
+
+export interface SifHeatmapNode {
+  id: string;
+  name: string;
+  level: 'site' | 'unit' | 'area' | 'activity' | 'lsr' | 'barrier';
+  total_reports: number;
+  sif_count: number;
+  precursor_density: number;
+  risk_level: HeatmapRiskLevel;
+  avg_risk_score: number;
+  trend_pct: number | null;
+  trend_label: string;
+  top_barrier: string;
+  is_fallback: boolean;
+  report_ids: string[];
+  children?: SifHeatmapNode[];
+}
+
+export interface SifHeatmapSummary {
+  total_reports: number;
+  total_precursors: number;
+  overall_density: number;
+  high_risk_concentrations: number;
+  emerging_concentrations: number;
+  top_concentration: string;
+}
+
+export interface HeatmapReportItem {
+  report_id: string;
+  id?: string | number;
+  description: string;
+  category: string;
+  risk_score: number;
+  risk_level: string;
+  sif_potential: string;
+  site?: string;
+  unit?: string;
+  area?: string;
+  activity?: string;
+  barrier_failure?: string;
+  pii_detected?: boolean;
+  pii_count?: number;
+  pii_types?: string;
+  date?: string | null;
+  created_at?: string | null;
+}
+
+export interface SifHeatmapResponse {
+  summary: SifHeatmapSummary;
+  tree: SifHeatmapNode[];
+  reports: HeatmapReportItem[];
+}
+
+export interface SifHeatmapFilter {
+  site?: string;
+  unit?: string;
+  area?: string;
+  activity?: string;
+  lsr?: string;
+  barrier?: string;
 }

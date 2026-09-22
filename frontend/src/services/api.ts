@@ -8,6 +8,8 @@
  * from the real backend.
  */
 
+import { SifHeatmapResponse, SifHeatmapFilter } from '../types';
+
 // ─── Response types (mirror backend Pydantic schemas) ────────────────────────
 
 export interface DashboardStats {
@@ -40,7 +42,13 @@ export interface ApiReport {
   sif_potential: string;   // "YES" | "NO"
   risk_level:    string;   // "LOW" | "MEDIUM" | "HIGH" | "CRITICAL"
   site?:         string;
+  unit?:         string;
+  area?:         string;
   activity?:     string;
+  barrier_failure?: string;
+  pii_detected?: boolean;
+  pii_count?:    number;
+  pii_types?:    string[];
   date?:         string | null;
   created_at?:   string | null;
 }
@@ -63,6 +71,7 @@ export interface UploadResult {
   skipped?:           number;
   skipped_reasons?:   string[];
   sif_count?:         number;
+  pii_detected_count?: number;
   risk_summary?:      Record<string, number>;
   description_column?: string;
   sample?: Array<{
@@ -542,5 +551,21 @@ export async function fetchCommandCenterData(): Promise<CommandCenterData> {
 
 export async function fetchDebugCounts(): Promise<DebugCounts> {
   return apiFetch<DebugCounts>('/debug/count');
+}
+
+/**
+ * GET /api/analytics/sif-heatmap
+ * Fetches operational SIF risk concentration tree and reports from SQLite.
+ */
+export async function fetchSifHeatmap(filter?: SifHeatmapFilter): Promise<SifHeatmapResponse> {
+  const query = new URLSearchParams();
+  if (filter?.site) query.set('site', filter.site);
+  if (filter?.unit) query.set('unit', filter.unit);
+  if (filter?.area) query.set('area', filter.area);
+  if (filter?.activity) query.set('activity', filter.activity);
+  if (filter?.lsr) query.set('lsr', filter.lsr);
+  if (filter?.barrier) query.set('barrier', filter.barrier);
+  const qs = query.toString() ? `?${query.toString()}` : '';
+  return apiFetch<SifHeatmapResponse>(`/analytics/sif-heatmap${qs}`);
 }
 

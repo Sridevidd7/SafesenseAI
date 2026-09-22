@@ -31,6 +31,7 @@ from services.report_service import (
     normalize_date,
 )
 from services.analytics_service import refresh_analytics_cache
+from services.pii_service import redact_pii
 
 logger = logging.getLogger("safesense.upload")
 logging.basicConfig(level=logging.INFO)
@@ -46,12 +47,16 @@ _DESCRIPTION_ALIASES = {
     "safety_observation",
 }
 
-# Optional columns the pipeline will use if present in the CSV.
-_OPTIONAL_REPORT_ID   = {"report_id", "id", "incident_id", "report_number", "rpt_id"}
-_OPTIONAL_SEVERITY    = {"severity", "risk_severity", "severity_level", "risk_level"}
-_OPTIONAL_REPORT_TYPE = {"report_type", "type", "category_input", "incident_type", "category", "life_saving_rule"}
-_OPTIONAL_DATE        = {"date", "incident_date", "timestamp", "datetime", "created_date", "time"}
-_OPTIONAL_LOCATION    = {"location", "site", "area", "workplace", "facility", "plant"}
+# Optional columns the pipeline will use if present in the CSV (ordered by priority).
+_OPTIONAL_REPORT_ID   = ("report_id", "id", "incident_id", "report_number", "rpt_id")
+_OPTIONAL_SEVERITY    = ("severity", "risk_severity", "severity_level", "risk_level")
+_OPTIONAL_REPORT_TYPE = ("report_type", "type", "category_input", "incident_type", "category", "life_saving_rule")
+_OPTIONAL_DATE        = ("date", "incident_date", "timestamp", "datetime", "created_date", "time")
+_OPTIONAL_LOCATION    = ("site", "plant", "facility", "installation", "location", "workplace")
+_OPTIONAL_UNIT        = ("unit", "operating_unit", "plant_unit", "process_unit", "refinery_unit", "facility_unit")
+_OPTIONAL_AREA        = ("area", "work_area", "zone", "section", "location_area", "bay", "sector")
+_OPTIONAL_BARRIER     = ("barrier_failure", "barrier", "failed_barrier", "control_failure", "barrier_type")
+_OPTIONAL_ACTIVITY    = ("activity", "task", "work", "operation", "job")
 
 SAMPLE_SIZE = 5   # number of processed rows returned in the response
 
@@ -88,8 +93,10 @@ class UploadResult:
     skipped_reasons:    list[str]    # human-readable skip reasons
     sample:             list[dict]   # first SAMPLE_SIZE saved rows
     risk_summary:       dict[str, int]
-    sif_count:          int
-    description_column: str
+    sif_count:          int          = 0
+    description_column: str          = ""
+    pii_detected_count: int          = 0
+    pii_total_redacted: int          = 0
 
 
 # ─── Internal helpers ─────────────────────────────────────────────────────────
@@ -180,7 +187,10 @@ def process_csv_upload(
     report_type_col = _detect_optional_column(list(df.columns), _OPTIONAL_REPORT_TYPE)
     date_col        = _detect_optional_column(list(df.columns), _OPTIONAL_DATE)
     site_col        = _detect_optional_column(list(df.columns), _OPTIONAL_LOCATION)
-    activity_col    = _detect_optional_column(list(df.columns), {"activity", "task", "work", "operation", "job"})
+    unit_col        = _detect_optional_column(list(df.columns), _OPTIONAL_UNIT)
+    area_col        = _detect_optional_column(list(df.columns), _OPTIONAL_AREA)
+    barrier_col     = _detect_optional_column(list(df.columns), _OPTIONAL_BARRIER)
+    activity_col    = _detect_optional_column(list(df.columns), _OPTIONAL_ACTIVITY)
 
     # ── 3. Preload existing IDs and hashes for row-level deduplication ────────
     existing_db_ids: set[str] = {
@@ -204,21 +214,30 @@ def process_csv_upload(
     skipped_reasons:    list[str]          = []
     risk_summary:       dict[str, int]     = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
     sif_count:          int                = 0
+    pii_rows_count:     int                = 0
+    pii_total_count:    int                = 0
 
     now = datetime.now(timezone.utc)
 
     for idx, row in df.iterrows():
-        description = normalize_text(str(row[desc_col]))
+        raw_description = normalize_text(str(row[desc_col]))
 
         # Skip rows where description is missing or too short
-        if len(description) < 5:
+        if len(raw_description) < 5:
             skipped += 1
             if len(skipped_reasons) < 20:
                 skipped_reasons.append(
                     f"Row {idx + 2}: description is empty or too short "
-                    f"(got {len(description)!r} chars)."
+                    f"(got {len(raw_description)!r} chars)."
                 )
             continue
+
+        # ── PII Preprocessing BEFORE NLP / Risk Engine ──
+        pii_res = redact_pii(raw_description)
+        description = pii_res.redacted_text
+        if pii_res.pii_detected:
+            pii_rows_count += 1
+            pii_total_count += pii_res.pii_count
 
         # Extract optional fields
         severity    = normalize_text(str(row[severity_col]))    if severity_col    else ""
@@ -226,18 +245,28 @@ def process_csv_upload(
         date_raw    = normalize_text(str(row[date_col]))        if date_col        else ""
         date_val    = normalize_date(date_raw)
         
-        # Site & Activity extraction with auto-fix fallback defaults
+        # Site, Unit, Area & Activity extraction with fallback defaults
         site_raw     = normalize_text(str(row[site_col]))     if site_col     else ""
+        unit_raw     = normalize_text(str(row[unit_col]))     if unit_col     else ""
+        area_raw     = normalize_text(str(row[area_col]))     if area_col     else ""
         activity_raw = normalize_text(str(row[activity_col])) if activity_col else ""
-        site_val     = site_raw if site_raw else "Site Alpha"
+        barrier_raw  = normalize_text(str(row[barrier_col]))  if barrier_col  else ""
+
+        site_val     = site_raw     if site_raw     else "Site Alpha"
+        unit_val     = unit_raw     if unit_raw     else "Not Specified"
+        area_val     = area_raw     if area_raw     else "Not Specified"
         activity_val = activity_raw if activity_raw else "General Operation"
 
-        # Compute content hash
+        # Compute content hash from sanitized description
         c_hash = compute_content_hash(description, date_val, site_val)
 
-        # Run rule engine
+        # Run rule engine on SANITIZED description
         analysis = analyze_text(description)
         cat_val  = report_type if report_type else analysis["category"]
+
+        # Determine barrier failure (CSV specified or engine detected)
+        detected_b = analysis.get("barrier") or analysis.get("barrier_failure")
+        barrier_val = barrier_raw if barrier_raw else (detected_b if detected_b else "Unspecified")
 
         # Determine report_id (user-supplied or deterministic hash)
         if report_id_col and str(row[report_id_col]).strip():
@@ -245,41 +274,12 @@ def process_csv_upload(
         else:
             row_id = c_hash
 
-        # Check for duplicate by ID or by content hash
-        if (
-            row_id in existing_db_ids
-            or row_id in seen_in_batch_ids
-            or c_hash in existing_db_hashes
-            or c_hash in seen_in_batch_hashes
-        ):
-            duplicates_skipped += 1
-            continue
-
-        seen_in_batch_ids.add(row_id)
-        seen_in_batch_hashes.add(c_hash)
-
         # Determine risk level
         effective_level = analysis["risk_level"]
         if severity.lower() in ("critical", "high", "medium", "low"):
             effective_level = severity.upper()
 
-        # Build ORM object
-        db_obj = Report(
-            report_id     = row_id,
-            content_hash  = c_hash,
-            description   = description,
-            category      = cat_val,
-            risk_score    = analysis["risk_score"],
-            sif_potential = analysis["sif_potential"],
-            risk_level    = effective_level,
-            site          = site_val,
-            activity      = activity_val,
-            date          = date_val,
-            created_at    = now,
-        )
-        db_objects.append(db_obj)
-
-        # Accumulate stats
+        # Accumulate stats for processed batch
         risk_summary[effective_level] = risk_summary.get(effective_level, 0) + 1
         if analysis["sif_potential"] == "YES":
             sif_count += 1
@@ -299,6 +299,41 @@ def process_csv_upload(
                 "activity":      activity_val,
                 "date":          date_val,
             })
+
+        # Check for duplicate by ID or by content hash
+        if (
+            row_id in existing_db_ids
+            or row_id in seen_in_batch_ids
+            or c_hash in existing_db_hashes
+            or c_hash in seen_in_batch_hashes
+        ):
+            duplicates_skipped += 1
+            continue
+
+        seen_in_batch_ids.add(row_id)
+        seen_in_batch_hashes.add(c_hash)
+
+        # Build ORM object with sanitized description and metadata
+        db_obj = Report(
+            report_id       = row_id,
+            content_hash    = c_hash,
+            description     = description,
+            category        = cat_val,
+            risk_score      = analysis["risk_score"],
+            sif_potential   = analysis["sif_potential"],
+            risk_level      = effective_level,
+            site            = site_val,
+            unit            = unit_val,
+            area            = area_val,
+            activity        = activity_val,
+            barrier_failure = barrier_val,
+            pii_detected    = 1 if pii_res.pii_detected else 0,
+            pii_count       = pii_res.pii_count,
+            pii_types       = ", ".join(pii_res.pii_types),
+            date            = date_val,
+            created_at      = now,
+        )
+        db_objects.append(db_obj)
 
     if not db_objects and duplicates_skipped == 0:
         raise ValueError(
@@ -354,5 +389,7 @@ def process_csv_upload(
         sample             = sample_rows,
         risk_summary       = risk_summary,
         sif_count          = sif_count,
+        pii_detected_count = pii_rows_count,
+        pii_total_redacted = pii_total_count,
         description_column = desc_col,
     )

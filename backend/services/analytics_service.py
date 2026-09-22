@@ -12,8 +12,9 @@ Guarantees:
 from __future__ import annotations
 
 import logging
+from collections import Counter, defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta, date
 from typing import Any, Dict, List, Optional
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
@@ -193,8 +194,11 @@ def get_all_reports_dicts(db: Session) -> list[dict[str, Any]]:
             "description":           r.description,
             "report_text":           r.description,
             "category":              r.category,
-            "barrier":               getattr(r, "barrier", None),
+            "barrier":               getattr(r, "barrier_failure", None) or getattr(r, "barrier", None),
+            "barrier_failure":       getattr(r, "barrier_failure", "Unspecified"),
             "site":                  r.site,
+            "unit":                  getattr(r, "unit", "Not Specified"),
+            "area":                  getattr(r, "area", "Not Specified"),
             "activity":              r.activity,
             "risk_score":            r.risk_score,
             "raw_score":             r.risk_score,
@@ -202,6 +206,9 @@ def get_all_reports_dicts(db: Session) -> list[dict[str, Any]]:
             "normalization_applied": norm["normalization_applied"],
             "risk_level":            r.risk_level,
             "sif_potential":         r.sif_potential,
+            "pii_detected":          bool(getattr(r, "pii_detected", 0)),
+            "pii_count":             int(getattr(r, "pii_count", 0)),
+            "pii_types":             str(getattr(r, "pii_types", "")),
             "date":                  r.date,
             "created_at":            r.created_at,
         })
@@ -218,14 +225,12 @@ def get_category_patterns(db: Session) -> list[dict[str, Any]]:
     total_count = get_total_reports(db)
     if total_count == 0:
         logger.info(f"[{datetime.now(timezone.utc).isoformat()}] EVENT=query_category_patterns TOTAL_REPORTS=0 ROWS_RETURNED=0")
-        print("Category patterns: []")
         return []
 
     reports_data = get_all_reports_dicts(db)
     clusters = cluster_reports(reports_data)
 
     logger.info(f"[{datetime.now(timezone.utc).isoformat()}] EVENT=query_category_patterns TOTAL_REPORTS={total_count} CLUSTERS_FOUND={len(clusters)}")
-    print("Similarity pattern clusters:", clusters)
     return clusters
 
 
@@ -283,7 +288,6 @@ def get_site_stats(db: Session) -> list[dict[str, Any]]:
     total_count = get_total_reports(db)
     if total_count == 0:
         logger.info(f"[{datetime.now(timezone.utc).isoformat()}] EVENT=query_site_stats TOTAL_REPORTS=0 ROWS_RETURNED=0")
-        print("Site stats: []")
         return []
 
     sql = text("""
@@ -486,3 +490,432 @@ def refresh_analytics_cache(db: Session) -> dict[str, Any]:
     }
     logger.info(f"[{datetime.now(timezone.utc).isoformat()}] EVENT=analytics_cache_refreshed TOTAL_REPORTS={total}")
     return result
+
+
+# ─── Operational SIF Risk Heatmap / Concentration Explorer ────────────────────
+
+FALLBACK_NAMES = {
+    "not specified",
+    "unspecified",
+    "general unit",
+    "general area",
+    "general operation",
+    "unknown barrier failure",
+    "unknown barrier",
+    "unknown",
+    "",
+}
+
+
+def _is_fallback_name(name: str | None) -> bool:
+    """Detect if location/barrier name is an unassigned fallback placeholder."""
+    if not name:
+        return True
+    return name.strip().lower() in FALLBACK_NAMES
+
+
+def _calculate_period_trend(reports: list[Report], anchor_date: Optional[date] = None) -> tuple[Optional[float], str]:
+    """
+    Computes SIF precursor trend between current 30-day window and immediately preceding 30-day window.
+    Returns (trend_pct, trend_label).
+    If date span < 14 days or no valid dates, returns (None, 'Insufficient data').
+    """
+    valid_dates: list[tuple[date, bool]] = []
+    for r in reports:
+        d_str = str(r.date or "").strip()
+        if len(d_str) >= 10:
+            try:
+                dt = datetime.strptime(d_str[:10], "%Y-%m-%d").date()
+                is_sif = str(r.sif_potential or "").upper() == "YES"
+                valid_dates.append((dt, is_sif))
+            except Exception:
+                pass
+
+    if not valid_dates:
+        return None, "Insufficient data"
+
+    dates_only = [d[0] for d in valid_dates]
+    max_d = anchor_date or max(dates_only)
+    min_d = min(dates_only)
+
+    # Require at least 14 days of span between earliest and latest observation
+    if (max_d - min_d).days < 14:
+        return None, "Insufficient data"
+
+    # Current window: [max_d - 30 days + 1, max_d]
+    # Previous window: [max_d - 60 days + 1, max_d - 30 days]
+    curr_start = max_d - timedelta(days=29)
+    prev_start = max_d - timedelta(days=59)
+
+    curr_sif = sum(1 for dt, is_sif in valid_dates if is_sif and curr_start <= dt <= max_d)
+    prev_sif = sum(1 for dt, is_sif in valid_dates if is_sif and prev_start <= dt < curr_start)
+
+    if prev_sif > 0:
+        pct = round(((curr_sif - prev_sif) / prev_sif) * 100, 1)
+        sign = "+" if pct > 0 else ""
+        return pct, f"{sign}{pct}% vs prev 30d"
+    elif curr_sif > 0:
+        return 100.0, "+100% vs prev 30d"
+    else:
+        return 0.0, "0.0% vs prev 30d"
+
+
+def _determine_node_risk_level(sif_count: int, critical_count: int, avg_score: float, trend_pct: Optional[float]) -> str:
+    """
+    Mutually exclusive risk level evaluation with strict precedence:
+    HIGH -> EMERGING -> MEDIUM -> LOW
+    """
+    if sif_count >= 3 or avg_score >= 70.0 or critical_count > 0:
+        return "HIGH"
+    if sif_count >= 1 and trend_pct is not None and trend_pct >= 15.0:
+        return "EMERGING"
+    if avg_score >= 50.0 or sif_count >= 1:
+        return "MEDIUM"
+    return "LOW"
+
+
+def _get_top_barrier(reports: list[Report]) -> str:
+    """Find dominant non-fallback failed barrier for a group of reports."""
+    barriers = [
+        str(r.barrier_failure or "").strip()
+        for r in reports
+        if r.barrier_failure and not _is_fallback_name(r.barrier_failure)
+    ]
+    if barriers:
+        return Counter(barriers).most_common(1)[0][0]
+    # Fallback to category if barrier_failure was unspecified
+    cats = [str(r.category or "").strip() for r in reports if r.category]
+    if cats:
+        return Counter(cats).most_common(1)[0][0]
+    return "Unspecified"
+
+
+def get_sif_risk_heatmap(
+    db: Session,
+    site: Optional[str] = None,
+    unit: Optional[str] = None,
+    area: Optional[str] = None,
+    activity: Optional[str] = None,
+    lsr: Optional[str] = None,
+    barrier: Optional[str] = None,
+) -> dict[str, Any]:
+    """
+    Computes Operational SIF Risk Concentration across the 6-tier hierarchy:
+    Site → Unit → Area → Activity → SIF Precursor / LSR → Failed Barrier.
+
+    All metrics are calculated directly from SQLite reports table.
+    """
+    query = db.query(Report)
+
+    if site and site.strip() and site.strip().lower() != "all":
+        query = query.filter(Report.site == site.strip())
+    if unit and unit.strip() and unit.strip().lower() != "all":
+        query = query.filter(Report.unit == unit.strip())
+    if area and area.strip() and area.strip().lower() != "all":
+        query = query.filter(Report.area == area.strip())
+    if activity and activity.strip() and activity.strip().lower() != "all":
+        query = query.filter(Report.activity == activity.strip())
+    if lsr and lsr.strip() and lsr.strip().lower() != "all":
+        query = query.filter(Report.category == lsr.strip())
+    if barrier and barrier.strip() and barrier.strip().lower() != "all":
+        query = query.filter(Report.barrier_failure == barrier.strip())
+
+    reports = query.order_by(Report.created_at.desc()).all()
+
+    if not reports:
+        return {
+            "summary": {
+                "total_reports": 0,
+                "total_precursors": 0,
+                "overall_density": 0.0,
+                "high_risk_concentrations": 0,
+                "emerging_concentrations": 0,
+                "top_concentration": "None detected",
+            },
+            "tree": [],
+            "reports": [],
+        }
+
+    # Find anchor max date across the matching report set
+    all_dts: list[date] = []
+    for r in reports:
+        d_str = str(r.date or "").strip()
+        if len(d_str) >= 10:
+            try:
+                all_dts.append(datetime.strptime(d_str[:10], "%Y-%m-%d").date())
+            except Exception:
+                pass
+    anchor_max_date = max(all_dts) if all_dts else None
+
+    # Track risk concentrations across the hierarchy (excluding fallback nodes)
+    high_risk_count = 0
+    emerging_count = 0
+    top_concentration_name = "None detected"
+    top_concentration_score = -1.0
+
+    # Build the 6-tier tree
+    # Level 1: Site
+    site_groups: dict[str, list[Report]] = defaultdict(list)
+    for r in reports:
+        s = r.site or "Site Alpha"
+        site_groups[s].append(r)
+
+    tree_nodes: list[dict[str, Any]] = []
+
+    for site_name, s_reports in site_groups.items():
+        s_sif = sum(1 for r in s_reports if str(r.sif_potential).upper() == "YES")
+        s_crit = sum(1 for r in s_reports if str(r.risk_level).upper() == "CRITICAL")
+        s_scores = [r.risk_score for r in s_reports if r.risk_score is not None]
+        s_avg = round(sum(s_scores) / len(s_scores), 1) if s_scores else 0.0
+        s_trend_pct, s_trend_lbl = _calculate_period_trend(s_reports, anchor_max_date)
+        s_risk = _determine_node_risk_level(s_sif, s_crit, s_avg, s_trend_pct)
+        s_top_bar = _get_top_barrier(s_reports)
+        s_density = round((s_sif / len(s_reports) * 100), 1) if s_reports else 0.0
+
+        if s_risk == "HIGH":
+            high_risk_count += 1
+        elif s_risk == "EMERGING":
+            emerging_count += 1
+
+        if not _is_fallback_name(site_name) and (s_avg > top_concentration_score or top_concentration_name == "None detected"):
+            top_concentration_score = s_avg
+            top_concentration_name = f"{site_name} (Risk: {s_risk}, SIF: {s_sif})"
+
+        # Level 2: Unit
+        unit_groups: dict[str, list[Report]] = defaultdict(list)
+        for r in s_reports:
+            u = r.unit or "Not Specified"
+            unit_groups[u].append(r)
+
+        unit_nodes: list[dict[str, Any]] = []
+        for unit_name, u_reports in unit_groups.items():
+            u_sif = sum(1 for r in u_reports if str(r.sif_potential).upper() == "YES")
+            u_crit = sum(1 for r in u_reports if str(r.risk_level).upper() == "CRITICAL")
+            u_scores = [r.risk_score for r in u_reports if r.risk_score is not None]
+            u_avg = round(sum(u_scores) / len(u_scores), 1) if u_scores else 0.0
+            u_trend_pct, u_trend_lbl = _calculate_period_trend(u_reports, anchor_max_date)
+            u_risk = _determine_node_risk_level(u_sif, u_crit, u_avg, u_trend_pct)
+            u_top_bar = _get_top_barrier(u_reports)
+            u_density = round((u_sif / len(u_reports) * 100), 1) if u_reports else 0.0
+            u_is_fallback = _is_fallback_name(unit_name)
+
+            if not u_is_fallback and u_risk == "HIGH":
+                high_risk_count += 1
+            elif not u_is_fallback and u_risk == "EMERGING":
+                emerging_count += 1
+
+            if not u_is_fallback and u_avg > top_concentration_score:
+                top_concentration_score = u_avg
+                top_concentration_name = f"{site_name} → {unit_name} ({u_risk})"
+
+            # Level 3: Area
+            area_groups: dict[str, list[Report]] = defaultdict(list)
+            for r in u_reports:
+                a = r.area or "Not Specified"
+                area_groups[a].append(r)
+
+            area_nodes: list[dict[str, Any]] = []
+            for area_name, a_reports in area_groups.items():
+                a_sif = sum(1 for r in a_reports if str(r.sif_potential).upper() == "YES")
+                a_crit = sum(1 for r in a_reports if str(r.risk_level).upper() == "CRITICAL")
+                a_scores = [r.risk_score for r in a_reports if r.risk_score is not None]
+                a_avg = round(sum(a_scores) / len(a_scores), 1) if a_scores else 0.0
+                a_trend_pct, a_trend_lbl = _calculate_period_trend(a_reports, anchor_max_date)
+                a_risk = _determine_node_risk_level(a_sif, a_crit, a_avg, a_trend_pct)
+                a_top_bar = _get_top_barrier(a_reports)
+                a_density = round((a_sif / len(a_reports) * 100), 1) if a_reports else 0.0
+                a_is_fallback = _is_fallback_name(area_name)
+
+                if not a_is_fallback and a_risk == "HIGH":
+                    high_risk_count += 1
+
+                # Level 4: Activity
+                act_groups: dict[str, list[Report]] = defaultdict(list)
+                for r in a_reports:
+                    act = r.activity or "General Operation"
+                    act_groups[act].append(r)
+
+                act_nodes: list[dict[str, Any]] = []
+                for act_name, act_reports in act_groups.items():
+                    act_sif = sum(1 for r in act_reports if str(r.sif_potential).upper() == "YES")
+                    act_crit = sum(1 for r in act_reports if str(r.risk_level).upper() == "CRITICAL")
+                    act_scores = [r.risk_score for r in act_reports if r.risk_score is not None]
+                    act_avg = round(sum(act_scores) / len(act_scores), 1) if act_scores else 0.0
+                    act_trend_pct, act_trend_lbl = _calculate_period_trend(act_reports, anchor_max_date)
+                    act_risk = _determine_node_risk_level(act_sif, act_crit, act_avg, act_trend_pct)
+                    act_top_bar = _get_top_barrier(act_reports)
+                    act_density = round((act_sif / len(act_reports) * 100), 1) if act_reports else 0.0
+
+                    # Level 5: LSR / Precursor Category
+                    lsr_groups: dict[str, list[Report]] = defaultdict(list)
+                    for r in act_reports:
+                        l = r.category or "General Safety"
+                        lsr_groups[l].append(r)
+
+                    lsr_nodes: list[dict[str, Any]] = []
+                    for lsr_name, lsr_reports in lsr_groups.items():
+                        lsr_sif = sum(1 for r in lsr_reports if str(r.sif_potential).upper() == "YES")
+                        lsr_crit = sum(1 for r in lsr_reports if str(r.risk_level).upper() == "CRITICAL")
+                        lsr_scores = [r.risk_score for r in lsr_reports if r.risk_score is not None]
+                        lsr_avg = round(sum(lsr_scores) / len(lsr_scores), 1) if lsr_scores else 0.0
+                        lsr_trend_pct, lsr_trend_lbl = _calculate_period_trend(lsr_reports, anchor_max_date)
+                        lsr_risk = _determine_node_risk_level(lsr_sif, lsr_crit, lsr_avg, lsr_trend_pct)
+                        lsr_top_bar = _get_top_barrier(lsr_reports)
+                        lsr_density = round((lsr_sif / len(lsr_reports) * 100), 1) if lsr_reports else 0.0
+
+                        # Level 6: Barrier Failure
+                        bar_groups: dict[str, list[Report]] = defaultdict(list)
+                        for r in lsr_reports:
+                            b = r.barrier_failure or "Unspecified"
+                            bar_groups[b].append(r)
+
+                        barrier_nodes: list[dict[str, Any]] = []
+                        for bar_name, bar_reports in bar_groups.items():
+                            b_sif = sum(1 for r in bar_reports if str(r.sif_potential).upper() == "YES")
+                            b_crit = sum(1 for r in bar_reports if str(r.risk_level).upper() == "CRITICAL")
+                            b_scores = [r.risk_score for r in bar_reports if r.risk_score is not None]
+                            b_avg = round(sum(b_scores) / len(b_scores), 1) if b_scores else 0.0
+                            b_trend_pct, b_trend_lbl = _calculate_period_trend(bar_reports, anchor_max_date)
+                            b_risk = _determine_node_risk_level(b_sif, b_crit, b_avg, b_trend_pct)
+                            b_density = round((b_sif / len(bar_reports) * 100), 1) if bar_reports else 0.0
+
+                            barrier_nodes.append({
+                                "id": f"barrier:{site_name}/{unit_name}/{area_name}/{act_name}/{lsr_name}/{bar_name}",
+                                "name": bar_name,
+                                "level": "barrier",
+                                "total_reports": len(bar_reports),
+                                "sif_count": b_sif,
+                                "precursor_density": b_density,
+                                "risk_level": b_risk,
+                                "avg_risk_score": b_avg,
+                                "trend_pct": b_trend_pct,
+                                "trend_label": b_trend_lbl,
+                                "top_barrier": bar_name,
+                                "is_fallback": _is_fallback_name(bar_name),
+                                "report_ids": [r.report_id for r in bar_reports],
+                                "children": [],
+                            })
+
+                        lsr_nodes.append({
+                            "id": f"lsr:{site_name}/{unit_name}/{area_name}/{act_name}/{lsr_name}",
+                            "name": lsr_name,
+                            "level": "lsr",
+                            "total_reports": len(lsr_reports),
+                            "sif_count": lsr_sif,
+                            "precursor_density": lsr_density,
+                            "risk_level": lsr_risk,
+                            "avg_risk_score": lsr_avg,
+                            "trend_pct": lsr_trend_pct,
+                            "trend_label": lsr_trend_lbl,
+                            "top_barrier": lsr_top_bar,
+                            "is_fallback": False,
+                            "report_ids": [r.report_id for r in lsr_reports],
+                            "children": barrier_nodes,
+                        })
+
+                    act_nodes.append({
+                        "id": f"activity:{site_name}/{unit_name}/{area_name}/{act_name}",
+                        "name": act_name,
+                        "level": "activity",
+                        "total_reports": len(act_reports),
+                        "sif_count": act_sif,
+                        "precursor_density": act_density,
+                        "risk_level": act_risk,
+                        "avg_risk_score": act_avg,
+                        "trend_pct": act_trend_pct,
+                        "trend_label": act_trend_lbl,
+                        "top_barrier": act_top_bar,
+                        "is_fallback": _is_fallback_name(act_name),
+                        "report_ids": [r.report_id for r in act_reports],
+                        "children": lsr_nodes,
+                    })
+
+                area_nodes.append({
+                    "id": f"area:{site_name}/{unit_name}/{area_name}",
+                    "name": area_name,
+                    "level": "area",
+                    "total_reports": len(a_reports),
+                    "sif_count": a_sif,
+                    "precursor_density": a_density,
+                    "risk_level": a_risk,
+                    "avg_risk_score": a_avg,
+                    "trend_pct": a_trend_pct,
+                    "trend_label": a_trend_lbl,
+                    "top_barrier": a_top_bar,
+                    "is_fallback": a_is_fallback,
+                    "report_ids": [r.report_id for r in a_reports],
+                    "children": act_nodes,
+                })
+
+            unit_nodes.append({
+                "id": f"unit:{site_name}/{unit_name}",
+                "name": unit_name,
+                "level": "unit",
+                "total_reports": len(u_reports),
+                "sif_count": u_sif,
+                "precursor_density": u_density,
+                "risk_level": u_risk,
+                "avg_risk_score": u_avg,
+                "trend_pct": u_trend_pct,
+                "trend_label": u_trend_lbl,
+                "top_barrier": u_top_bar,
+                "is_fallback": u_is_fallback,
+                "report_ids": [r.report_id for r in u_reports],
+                "children": area_nodes,
+            })
+
+        tree_nodes.append({
+            "id": f"site:{site_name}",
+            "name": site_name,
+            "level": "site",
+            "total_reports": len(s_reports),
+            "sif_count": s_sif,
+            "precursor_density": s_density,
+            "risk_level": s_risk,
+            "avg_risk_score": s_avg,
+            "trend_pct": s_trend_pct,
+            "trend_label": s_trend_lbl,
+            "top_barrier": s_top_bar,
+            "is_fallback": False,
+            "report_ids": [r.report_id for r in s_reports],
+            "children": unit_nodes,
+        })
+
+    total_sif_all = sum(1 for r in reports if str(r.sif_potential).upper() == "YES")
+    overall_density = round((total_sif_all / len(reports) * 100), 1) if reports else 0.0
+
+    report_list = [
+        {
+            "report_id": r.report_id,
+            "id": r.report_id,
+            "description": r.description,
+            "category": r.category,
+            "risk_score": r.risk_score,
+            "risk_level": r.risk_level,
+            "sif_potential": r.sif_potential,
+            "site": r.site,
+            "unit": getattr(r, "unit", "Not Specified"),
+            "area": getattr(r, "area", "Not Specified"),
+            "activity": r.activity,
+            "barrier_failure": getattr(r, "barrier_failure", "Unspecified"),
+            "pii_detected": bool(getattr(r, "pii_detected", 0)),
+            "pii_count": int(getattr(r, "pii_count", 0)),
+            "pii_types": str(getattr(r, "pii_types", "")),
+            "date": r.date,
+            "created_at": r.created_at,
+        }
+        for r in reports
+    ]
+
+    return {
+        "summary": {
+            "total_reports": len(reports),
+            "total_precursors": total_sif_all,
+            "overall_density": overall_density,
+            "high_risk_concentrations": high_risk_count,
+            "emerging_concentrations": emerging_count,
+            "top_concentration": top_concentration_name,
+        },
+        "tree": tree_nodes,
+        "reports": report_list,
+    }

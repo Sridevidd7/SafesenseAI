@@ -600,6 +600,39 @@ export default function AnalysisPage() {
                 </div>
               </div>
 
+              {/* Privacy Protection Card */}
+              {analysis.pii_detected && (
+                <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl text-xs text-indigo-950 flex items-start gap-2.5 shadow-xs">
+                  <Shield className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-indigo-950">Privacy Protection Applied</span>
+                      <span className="text-[10px] bg-indigo-100 text-indigo-700 font-semibold px-2 py-0.5 rounded-full border border-indigo-200">
+                        {analysis.pii_count || 1} identifier{(analysis.pii_count ?? 1) > 1 ? 's' : ''} sanitized
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-indigo-800 mt-1">
+                      Personal identifiable information was detected and automatically redacted before AI risk analysis.
+                    </p>
+                    {analysis.pii_types && analysis.pii_types.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        {analysis.pii_types.map((type, i) => (
+                          <span key={i} className="text-[10px] font-mono bg-white text-indigo-700 px-1.5 py-0.5 rounded border border-indigo-200 font-semibold">
+                            [{type}]
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {analysis.redacted_text && (
+                      <div className="mt-2 p-2 bg-white rounded border border-indigo-100 text-[11px] font-mono text-slate-700 break-words">
+                        <span className="text-[9px] uppercase font-bold text-indigo-500 block font-sans mb-0.5">Sanitized Text:</span>
+                        {analysis.redacted_text}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Fallback Visibility Banner */}
               {analysis.source === 'fallback' && (
                 <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-900 flex items-start gap-2.5 shadow-xs">
@@ -774,6 +807,15 @@ export default function AnalysisPage() {
               </div>
             </div>
 
+            {modalReport.pii_detected && (
+              <div className="p-2.5 bg-indigo-50 border border-indigo-200 rounded-xl text-xs text-indigo-900 flex items-center gap-2">
+                <Shield className="w-4 h-4 text-indigo-600 shrink-0" />
+                <span>
+                  <strong>Privacy Protected:</strong> {modalReport.pii_count || 1} personal identifier(s) sanitized in this report.
+                </span>
+              </div>
+            )}
+
             <div className="grid grid-cols-3 gap-2 text-center text-xs">
               <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
                 <span className="text-[10px] text-slate-400 block font-semibold">Category</span>
@@ -788,6 +830,23 @@ export default function AnalysisPage() {
                 <span className="font-bold text-slate-800">{modalReport.sif_potential}</span>
               </div>
             </div>
+
+            {(modalReport.unit || modalReport.area || modalReport.barrier_failure) && (
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                {(modalReport.unit || modalReport.area) && (
+                  <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
+                    <span className="text-[10px] text-slate-400 block font-semibold">Unit / Area</span>
+                    <span className="font-bold text-slate-800">{modalReport.unit || '—'} / {modalReport.area || '—'}</span>
+                  </div>
+                )}
+                {modalReport.barrier_failure && (
+                  <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
+                    <span className="text-[10px] text-slate-400 block font-semibold">Failed Barrier</span>
+                    <span className="font-bold text-orange-700">{modalReport.barrier_failure}</span>
+                  </div>
+                )}
+              </div>
+            )}
 
             {modalReport.report_id && (
               <div className="text-[11px] text-slate-500 bg-slate-50 px-3 py-1.5 rounded-lg font-mono flex items-center gap-1.5 border border-slate-100">

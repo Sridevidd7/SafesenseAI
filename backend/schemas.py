@@ -58,7 +58,13 @@ class ReportResponse(BaseModel):
     risk_level:    str
     risk_reason:   str | None = None
     site:          str = "Site Alpha"
+    unit:          str = "Not Specified"
+    area:          str = "Not Specified"
     activity:      str = "General Operation"
+    barrier_failure: str = "Unspecified"
+    pii_detected:  bool = False
+    pii_count:     int = 0
+    pii_types:     str = ""
     date:          str | None = None
     created_at:    datetime | None = None
     data:          dict[str, Any] | None = None
@@ -96,7 +102,13 @@ class ProcessedRowSchema(BaseModel):
     risk_reason:   str | None = Field(default=None, description="Short explanation of WHY score is high/low")
     sif_potential: str    = Field(description="YES | NO")
     site:          str    = Field(default="Site Alpha", description="Facility or site name")
+    unit:          str    = Field(default="Not Specified", description="Unit or operating plant")
+    area:          str    = Field(default="Not Specified", description="Area or specific zone")
     activity:      str    = Field(default="General Operation", description="Activity or task name")
+    barrier_failure: str  = Field(default="Unspecified", description="Barrier failure identified")
+    pii_detected:  bool   = Field(default=False, description="Whether PII was detected and redacted")
+    pii_count:     int    = Field(default=0, description="Count of PII identifiers redacted")
+    pii_types:     str    = Field(default="", description="Comma-separated PII identifier categories")
     date:          str | None = None
 
 
@@ -152,6 +164,41 @@ class DebugCountResponse(BaseModel):
     with_activity: int
 
 
+# ─── SIF Risk Concentration Heatmap schemas ───────────────────────────────────
+
+class SifHeatmapNode(BaseModel):
+    id:                 str
+    name:               str
+    level:              str   # 'site' | 'unit' | 'area' | 'activity' | 'lsr' | 'barrier'
+    total_reports:      int = 0
+    sif_count:          int = 0
+    precursor_density:  float = 0.0
+    risk_level:         str = "LOW"  # HIGH | EMERGING | MEDIUM | LOW
+    avg_risk_score:     float = 0.0
+    trend_pct:          float | None = None
+    trend_label:        str = "Insufficient data"
+    top_barrier:        str = "Unspecified"
+    is_fallback:        bool = False
+    report_ids:         list[str] = Field(default_factory=list)
+    children:           list["SifHeatmapNode"] = Field(default_factory=list)
+
+
+class SifHeatmapSummary(BaseModel):
+    total_reports:            int = 0
+    total_precursors:         int = 0
+    overall_density:          float = 0.0
+    high_risk_concentrations: int = 0
+    emerging_concentrations:  int = 0
+    top_concentration:        str = "None detected"
+
+
+class SifHeatmapResponse(BaseModel):
+    summary:    SifHeatmapSummary
+    tree:       list[SifHeatmapNode]
+    reports:    list[ReportResponse] = Field(default_factory=list)
+    meta:       MetaInfo | None = None
+
+
 class UploadResponse(BaseModel):
     """
     Returned by POST /api/reports/upload after processing a full CSV file.
@@ -170,6 +217,8 @@ class UploadResponse(BaseModel):
     sample:             list[dict] = Field(default_factory=list, description="First 5 processed rows")
     risk_summary:       dict[str, int] = Field(default_factory=dict, description="Count per risk level")
     sif_count:          int  = Field(default=0, description="Number of rows classified as SIF potential YES")
+    pii_detected_count: int  = Field(default=0, description="Number of uploaded rows with PII redacted")
+    pii_total_redacted: int  = Field(default=0, description="Total number of PII items sanitized")
     description_column: str  = Field(default="", description="Column name used as 'description'")
 
 
