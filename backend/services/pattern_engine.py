@@ -17,6 +17,8 @@ import logging
 logger = logging.getLogger("safesense.pattern_engine")
 
 
+from services.barrier_dictionary import normalize_text
+
 STOPWORDS: Set[str] = {
     "the", "a", "an", "and", "or", "in", "on", "at", "to", "for", "of", "with",
     "by", "from", "is", "was", "were", "are", "been", "be", "have", "has", "had",
@@ -24,14 +26,170 @@ STOPWORDS: Set[str] = {
     "before", "after", "then", "into", "onto", "out", "over", "under", "about"
 }
 
+# ─── SYNONYM CANONICAL TOKEN EXPANSION MAP ──────────────────────────────────
+SYNONYM_TOKEN_MAP: Dict[str, str] = {
+    # Actors
+    "worker": "canon_actor",
+    "technician": "canon_actor",
+    "operator": "canon_actor",
+    "contractor": "canon_actor",
+    "personnel": "canon_actor",
+    "electrician": "canon_actor",
+    "welder": "canon_actor",
+    "crew": "canon_actor",
+    "team": "canon_actor",
+
+    # Actions
+    "entered": "canon_action_entry",
+    "entering": "canon_action_entry",
+    "entry": "canon_action_entry",
+    "went": "canon_action_entry",
+    "stepped": "canon_action_entry",
+    "climbed": "canon_action_height",
+    "climbing": "canon_action_height",
+    "servicing": "canon_action_service",
+    "serviced": "canon_action_service",
+    "operating": "canon_action_operate",
+    "operated": "canon_action_operate",
+
+    # Negations & Failure Indicators
+    "without": "canon_negation",
+    "missing": "canon_negation",
+    "lacked": "canon_negation",
+    "absence": "canon_negation",
+    "omitted": "canon_negation",
+    "skipped": "canon_negation",
+    "failed": "canon_negation",
+
+    # Energy Isolation / Live Electrical
+    "energized": "canon_energized",
+    "live": "canon_energized",
+    "powered": "canon_energized",
+    "electrical": "canon_energized",
+    "electric": "canon_energized",
+    "voltage": "canon_energized",
+    "power": "canon_energized",
+    "circuit": "canon_circuit",
+    "breaker": "canon_circuit",
+    "switchgear": "canon_circuit",
+    "isolated": "canon_isolated",
+    "isolation": "canon_isolated",
+    "deenergized": "canon_isolated",
+    "de-energized": "canon_isolated",
+    "disconnected": "canon_isolated",
+    "lockout": "canon_loto",
+    "tagout": "canon_loto",
+    "loto": "canon_loto",
+    "padlock": "canon_loto",
+    
+    # Confined Space
+    "vessel": "canon_confined_space",
+    "tank": "canon_confined_space",
+    "chamber": "canon_confined_space",
+    "sump": "canon_confined_space",
+    "pit": "canon_confined_space",
+    "manhole": "canon_confined_space",
+    "confined": "canon_confined_space",
+    "reactor": "canon_confined_space",
+    "column": "canon_confined_space",
+    
+    # Gas Testing & Atmosphere
+    "gas": "canon_gas_test",
+    "atmospheric": "canon_gas_test",
+    "atmosphere": "canon_gas_test",
+    "oxygen": "canon_gas_test",
+    "h2s": "canon_gas_test",
+    "sampling": "canon_gas_test",
+    "monitoring": "canon_gas_test",
+    "test": "canon_gas_test",
+    "testing": "canon_gas_test",
+    "tested": "canon_gas_test",
+    "check": "canon_gas_test",
+    "checked": "canon_gas_test",
+    
+    # Permits
+    "permit": "canon_permit",
+    "ptw": "canon_permit",
+    "clearance": "canon_permit",
+    "authorization": "canon_permit",
+    "approval": "canon_permit",
+    
+    # Working at Height & Fall Protection
+    "height": "canon_height",
+    "scaffold": "canon_height",
+    "ladder": "canon_height",
+    "roof": "canon_height",
+    "elevated": "canon_height",
+    "platform": "canon_height",
+    "harness": "canon_fall_protection",
+    "lanyard": "canon_fall_protection",
+    "lifeline": "canon_fall_protection",
+    "tied": "canon_fall_protection",
+    "guardrail": "canon_fall_protection",
+    
+    # Line of Fire / Lifting
+    "crane": "canon_lifting",
+    "rigging": "canon_lifting",
+    "hoist": "canon_lifting",
+    "suspended": "canon_lifting",
+    "load": "canon_lifting",
+    "sling": "canon_lifting",
+    
+    # Vehicle Movement
+    "forklift": "canon_vehicle",
+    "truck": "canon_vehicle",
+    "vehicle": "canon_vehicle",
+    "excavator": "canon_vehicle",
+    "reversing": "canon_vehicle",
+    
+    # Hot Work
+    "welding": "canon_hot_work",
+    "torch": "canon_hot_work",
+    "grinding": "canon_hot_work",
+    "brazing": "canon_hot_work",
+    "sparks": "canon_hot_work",
+    "flame": "canon_hot_work",
+    
+    # Chemical Handling
+    "chemical": "canon_chemical",
+    "acid": "canon_chemical",
+    "caustic": "canon_chemical",
+    "toxic": "canon_chemical",
+    "spill": "canon_chemical",
+    "leak": "canon_chemical",
+    
+    # PPE
+    "ppe": "canon_ppe",
+    "gloves": "canon_ppe",
+    "goggles": "canon_ppe",
+    "glasses": "canon_ppe",
+    "respirator": "canon_ppe",
+    "helmet": "canon_ppe",
+    "mask": "canon_ppe",
+}
+
 
 def tokenize_report(text: str) -> Set[str]:
-    """Tokenize and remove common stopwords for high-signal similarity comparison."""
+    """
+    Tokenize with text normalization and synonym expansion:
+    1. Runs robust normalization (abbreviations & typo tolerance)
+    2. Filters standard stopwords
+    3. Expands concepts with canonical synonym group tokens for stable clustering
+    """
     if not text:
         return set()
-    cleaned = re.sub(r"[^\w\s]", " ", text.lower())
-    words = cleaned.split()
-    return {w for w in words if w not in STOPWORDS and len(w) > 2}
+    norm = normalize_text(text)
+    cleaned = re.sub(r"[^\w\s]", " ", norm.lower())
+    raw_words = cleaned.split()
+    
+    expanded_tokens: Set[str] = set()
+    for w in raw_words:
+        if w not in STOPWORDS and len(w) > 2:
+            expanded_tokens.add(w)
+            if w in SYNONYM_TOKEN_MAP:
+                expanded_tokens.add(SYNONYM_TOKEN_MAP[w])
+                
+    return expanded_tokens
 
 
 def compute_similarity(rep1: Dict[str, Any], rep2: Dict[str, Any]) -> float:
@@ -201,8 +359,8 @@ def cluster_reports(reports: List[Dict[str, Any]], similarity_threshold: Optiona
             "trend": "increasing" if count >= 3 and sif_count > 0 else "stable"
         })
 
-    # Sort clusters by frequency and risk score descending
-    formatted_clusters.sort(key=lambda c: (c["count"], c["avg_risk"]), reverse=True)
+    # Sort clusters deterministically by frequency desc, avg_risk desc, cluster_id asc
+    formatted_clusters.sort(key=lambda c: (-c["count"], -c["avg_risk"], str(c.get("cluster_id", ""))))
     return formatted_clusters
 
 
@@ -211,14 +369,17 @@ def detect_repeated_failures(clusters: List[Dict[str, Any]]) -> List[Dict[str, A
     return [c for c in clusters if c.get("count", 0) >= 3]
 
 
-def classify_trend(series_values: List[int], labels: Optional[List[str]] = None) -> Dict[str, str]:
+def classify_trend(series_values: List[int], labels: Optional[List[str]] = None, total_reports: Optional[int] = None) -> Dict[str, str]:
     """
     Computes temporal trend direction and generates an explainable summary.
+    If total dataset size < 10 reports or sum(series_values) < 10, disables deceptive trend interpretation.
     """
-    if not series_values or len(series_values) < 2:
+    total = total_reports if total_reports is not None else (sum(series_values) if series_values else 0)
+    if not series_values or len(series_values) < 2 or total < 10:
         return {
             "trend": "STABLE",
-            "reason": "Insufficient historical data points to determine multi-period trajectory."
+            "reason": "Insufficient data for reliable trend analysis",
+            "trend_note": "Insufficient data for reliable trend analysis"
         }
 
     first_val = series_values[0]
@@ -354,8 +515,9 @@ def generate_insights(
     if monthly_series and len(monthly_series) >= 2:
         counts = [m.get("total", 0) or m.get("count", 0) for m in monthly_series]
         labels = [m.get("month", "") or m.get("period", "") for m in monthly_series]
-        trend_info = classify_trend(counts, labels)
-        if trend_info["trend"] != "STABLE":
+        total_reps = len(reports) if reports else sum(counts)
+        trend_info = classify_trend(counts, labels, total_reports=total_reps)
+        if trend_info["trend"] != "STABLE" and trend_info.get("trend_note") != "Insufficient data for reliable trend analysis":
             insights.append({
                 "type": "TREND",
                 "title": f"Operational Trajectory: {trend_info['trend']}",

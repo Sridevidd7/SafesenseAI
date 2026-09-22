@@ -17,12 +17,35 @@ import SettingsPage from './pages/SettingsPage';
 import CommandCenterPage from './pages/CommandCenterPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = useApp();
+  const { isAuthenticated, loading } = useApp();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin" />
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Restoring Session...</p>
+        </div>
+      </div>
+    );
+  }
+
   return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace />;
 }
 
 function AppRoutes() {
-  const { isAuthenticated } = useApp();
+  const { isAuthenticated, loading } = useApp();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin" />
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Loading SafeSense AI...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <Routes>

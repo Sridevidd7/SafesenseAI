@@ -28,7 +28,8 @@ export default function LoginPage() {
 
     const account = DEMO_ACCOUNTS.find(a => a.email === email && a.password === password);
     if (account) {
-      dispatch({ type: 'LOGIN', payload: account.user });
+      const token = `token_${account.user.id}_${Date.now()}`;
+      dispatch({ type: 'LOGIN', payload: { ...account.user, token } });
       navigate('/dashboard');
     } else {
       setError('Invalid credentials. Try admin@safesense.ai / admin123');

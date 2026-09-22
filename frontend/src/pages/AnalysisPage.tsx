@@ -590,6 +590,12 @@ export default function AnalysisPage() {
                         <span className="text-orange-700 font-bold">{analysis.barrier_failure || 'Multiple/Unspecified'}</span>
                       </div>
                     </div>
+                    {analysis.risk_reason && (
+                      <div className="pt-2 border-t border-slate-100 text-[11px] text-slate-700">
+                        <span className="font-bold text-slate-900">Score Justification: </span>
+                        <span>{analysis.risk_reason}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

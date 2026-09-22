@@ -1,10 +1,12 @@
-import React, { createContext, useContext, useReducer, ReactNode } from 'react';
+import React, { createContext, useContext, useReducer, useEffect, ReactNode } from 'react';
 import { SafetyReport, DatasetInfo, User, CorrectiveAction, MultilingualStats, EMPTY_MULTILINGUAL_STATS } from '../types';
 
 // ─── State ────────────────────────────────────────────────────────────────────
 interface AppState {
   user: User | null;
+  token: string | null;
   isAuthenticated: boolean;
+  loading: boolean;
   dataset: DatasetInfo | null;
   reports: SafetyReport[];
   selectedReport: SafetyReport | null;
@@ -17,7 +19,9 @@ interface AppState {
 
 const initialState: AppState = {
   user: null,
+  token: null,
   isAuthenticated: false,
+  loading: true,
   dataset: null,
   reports: [],
   selectedReport: null,
@@ -31,6 +35,8 @@ const initialState: AppState = {
 // ─── Actions ──────────────────────────────────────────────────────────────────
 type Action =
   | { type: 'LOGIN'; payload: User }
+  | { type: 'RESTORE_AUTH'; payload: { user: User; token: string } }
+  | { type: 'AUTH_READY' }
   | { type: 'LOGOUT' }
   | { type: 'SET_DATASET'; payload: { dataset: DatasetInfo; reports: SafetyReport[]; isDemo: boolean; multilingualStats?: MultilingualStats } }
   | { type: 'CLEAR_DATASET' }
@@ -45,10 +51,47 @@ type Action =
 
 function appReducer(state: AppState, action: Action): AppState {
   switch (action.type) {
-    case 'LOGIN':
-      return { ...state, user: action.payload, isAuthenticated: true };
-    case 'LOGOUT':
-      return { ...initialState };
+    case 'LOGIN': {
+      const user = action.payload;
+      const token = user.token || localStorage.getItem('token') || `token_${user.id}_${Date.now()}`;
+      try {
+        localStorage.setItem('token', token);
+        localStorage.setItem('user', JSON.stringify({ ...user, token }));
+      } catch (e) {
+        console.error('Failed to persist user in localStorage:', e);
+      }
+      return {
+        ...state,
+        user: { ...user, token },
+        token,
+        isAuthenticated: true,
+        loading: false,
+      };
+    }
+    case 'RESTORE_AUTH': {
+      return {
+        ...state,
+        user: action.payload.user,
+        token: action.payload.token,
+        isAuthenticated: true,
+        loading: false,
+      };
+    }
+    case 'AUTH_READY': {
+      return {
+        ...state,
+        loading: false,
+      };
+    }
+    case 'LOGOUT': {
+      try {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+      } catch (e) {
+        console.error('Failed to clear localStorage on logout:', e);
+      }
+      return { ...initialState, loading: false };
+    }
     case 'SET_DATASET':
       return {
         ...state,
@@ -119,6 +162,47 @@ const AppContext = createContext<AppContextValue | undefined>(undefined);
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(appReducer, initialState);
+
+  // Rehydrate auth state on mount before any routing decisions
+  useEffect(() => {
+    try {
+      const token = localStorage.getItem('token');
+      const storedUser = localStorage.getItem('user');
+
+      console.log('TOKEN:', token);
+      console.log('USER STATE:', storedUser ? JSON.parse(storedUser) : null);
+
+      if (token && storedUser) {
+        const parsedUser = JSON.parse(storedUser) as User;
+        dispatch({ type: 'RESTORE_AUTH', payload: { user: parsedUser, token } });
+      } else if (token) {
+        const defaultUser: User = {
+          id: '1',
+          name: 'Alex Morgan',
+          email: 'hse@safesense.ai',
+          role: 'HSE Officer',
+          site: 'Site Alpha',
+          token,
+        };
+        localStorage.setItem('user', JSON.stringify(defaultUser));
+        dispatch({ type: 'RESTORE_AUTH', payload: { user: defaultUser, token } });
+      } else {
+        dispatch({ type: 'AUTH_READY' });
+      }
+    } catch (err) {
+      console.error('Error rehydrating auth state:', err);
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      dispatch({ type: 'AUTH_READY' });
+    }
+  }, []);
+
+  // Debug logging
+  useEffect(() => {
+    console.log('LOADING:', state.loading);
+    console.log('USER STATE:', state.user);
+  }, [state.loading, state.user]);
+
   return (
     <AppContext.Provider value={{ ...state, dispatch }}>
       {children}

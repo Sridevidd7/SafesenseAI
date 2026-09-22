@@ -293,6 +293,7 @@ def process_csv_upload(
                 "category":      cat_val,
                 "risk_score":    analysis["risk_score"],
                 "risk_level":    effective_level,
+                "risk_reason":   analysis.get("risk_reason"),
                 "sif_potential": analysis["sif_potential"],
                 "site":          site_val,
                 "activity":      activity_val,

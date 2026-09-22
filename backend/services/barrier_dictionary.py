@@ -14,8 +14,12 @@ Features:
 from typing import Dict, List, Set, Any, Optional
 import re
 import string
+import logging
+import difflib
 
-# ─── 1. NORMALIZATION ─────────────────────────────────────────────────────────
+logger = logging.getLogger("safesense.barrier_dictionary")
+
+# ─── 1. NORMALIZATION & ROBUST INPUT HANDLING ───────────────────────────────
 
 CONTRACTIONS: Dict[str, str] = {
     r"\bdidn't\b": "did not",
@@ -35,18 +39,124 @@ CONTRACTIONS: Dict[str, str] = {
     r"\baren't\b": "are not",
 }
 
+# Common Industrial & Safety Abbreviations
+COMMON_ABBREVIATIONS: Dict[str, str] = {
+    r"\bloto\b": "lockout tagout",
+    r"\bptw\b": "permit to work",
+    r"\bppe\b": "personal protective equipment",
+    r"\bsds\b": "safety data sheet",
+    r"\bswp\b": "safe work permit",
+    r"\bjha\b": "job hazard analysis",
+    r"\btra\b": "task risk assessment",
+    r"\bhgv\b": "heavy vehicle",
+    r"\bh2s\b": "hydrogen sulfide",
+    r"\bscba\b": "self contained breathing apparatus",
+    r"\bapr\b": "air purifying respirator",
+}
+
+# Deterministic Typo Normalization Dictionary
+COMMON_TYPOS: Dict[str, str] = {
+    "gass": "gas",
+    "gases": "gas",
+    "scafold": "scaffold",
+    "scafolding": "scaffold",
+    "scaffld": "scaffold",
+    "scaffolding": "scaffold",
+    "harnes": "harness",
+    "harnees": "harness",
+    "harnesss": "harness",
+    "isloation": "isolation",
+    "isolaton": "isolation",
+    "isolatn": "isolation",
+    "isolt": "isolation",
+    "isolat": "isolation",
+    "deenergiz": "de-energized",
+    "deenergized": "de-energized",
+    "de-energise": "de-energized",
+    "deenergise": "de-energized",
+    "energised": "energized",
+    "baricade": "barricade",
+    "barricad": "barricade",
+    "barakade": "barricade",
+    "exclution": "exclusion",
+    "exclusn": "exclusion",
+    "extingusher": "extinguisher",
+    "extingush": "extinguisher",
+    "extingwisher": "extinguisher",
+    "respirater": "respirator",
+    "resprator": "respirator",
+    "confind": "confined",
+    "confinded": "confined",
+    "vessle": "vessel",
+    "vesel": "vessel",
+    "vessl": "vessel",
+    "depresurize": "depressurize",
+    "depressurise": "depressurize",
+    "depresurised": "depressurized",
+    "depresur": "depressurize",
+    "unauthoriz": "unauthorized",
+    "unauthoris": "unauthorized",
+    "linyard": "lanyard",
+    "laynard": "lanyard",
+    "chemcal": "chemical",
+    "chemicl": "chemical",
+    "breker": "breaker",
+    "braker": "breaker",
+}
+
+# Key Safety Vocabulary for Fuzzy Tolerance Match
+FUZZY_SAFETY_VOCAB: List[str] = [
+    "scaffold", "scaffolding", "harness", "isolation", "barrier", "confined", "respirator",
+    "extinguisher", "depressurize", "depressurized", "lockout", "tagout", "testing",
+    "permit", "clearance", "barricade", "exclusion", "chemical", "hazard", "equipment",
+    "welding", "atmospheric", "oxygen", "voltage", "switchgear", "circuit", "protective",
+    "guardrail", "lifeline", "lanyard", "authorized", "authorization", "overhaul"
+]
+
 PUNCTUATION_TRANSLATOR = str.maketrans(string.punctuation, " " * len(string.punctuation))
 
 
 def normalize_text(text: str) -> str:
-    """Normalize input text with contraction expansion and clean tokenization."""
+    """
+    Robust Input Normalization:
+    1. Contraction expansion (e.g. didn't -> did not)
+    2. Common abbreviation expansion (loto -> lockout tagout, ptw -> permit to work, ppe -> personal protective equipment)
+    3. Punctuation stripping & clean tokenization
+    4. Spelling tolerance via deterministic typo lookup and fuzzy matching for key safety terms
+    """
     if not text:
         return ""
     lowered = text.lower()
+    
+    # 1. Expand contractions
     for pattern, replacement in CONTRACTIONS.items():
         lowered = re.sub(pattern, replacement, lowered)
+
+    # 2. Expand common abbreviations
+    for pattern, replacement in COMMON_ABBREVIATIONS.items():
+        lowered = re.sub(pattern, replacement, lowered)
+
+    # 3. Strip punctuation
     cleaned = lowered.translate(PUNCTUATION_TRANSLATOR)
-    return " ".join(cleaned.split())
+    raw_tokens = cleaned.split()
+
+    # 4. Correct typos and apply fuzzy matching for key safety terms
+    corrected_tokens: List[str] = []
+    for tok in raw_tokens:
+        if tok in COMMON_TYPOS:
+            corrected_tokens.append(COMMON_TYPOS[tok])
+        elif len(tok) >= 5 and tok not in ("without", "during", "before", "after", "worker", "contractor"):
+            matches = difflib.get_close_matches(tok, FUZZY_SAFETY_VOCAB, n=1, cutoff=0.82)
+            if matches:
+                corrected_tokens.append(matches[0])
+            else:
+                corrected_tokens.append(tok)
+        else:
+            corrected_tokens.append(tok)
+
+    normalized_str = " ".join(corrected_tokens)
+    logger.info(f"[INPUT_NORMALIZED] input='{text[:60]}...' normalized='{normalized_str[:60]}...'")
+    return normalized_str
 
 
 # ─── 2. DOMAIN MERGE & CONFLICT RESOLUTION MAP ────────────────────────────────
@@ -129,58 +239,58 @@ POSITIVE_COMPLETION_PATTERNS: Dict[str, List[re.Pattern]] = {
 
 BARRIER_REGEX_PATTERNS: Dict[str, List[re.Pattern]] = {
     "Gas Testing Not Completed": [
-        re.compile(r"\b(?:without|no|not|missing|lacked|failed\s+to(?:\s+conduct|\s+perform)?)\s+(?:any\s+)?(?:gas|atmospheric|atmosphere|oxygen|air)\s+(?:test(?:ing)?|check(?:ing)?|sampling|monitoring|levels?|measurement)\b"),
-        re.compile(r"\b(?:gas|atmospheric|atmosphere|oxygen|air)\s+(?:levels?|sampling|test(?:ing)?|check(?:ing)?|monitoring)\s+(?:were|was|is|are)?\s*(?:not|never|omitted|skipped)\s*(?:done|completed|conducted|performed|tested|checked|monitored|taken|measured)\b"),
-        re.compile(r"\b(?:not|never)\s+(?:tested|checked|monitored|sampled)\s+(?:for\s+gas|the\s+atmosphere|atmospheric|air\s+quality|oxygen|gas\s+levels)\b"),
-        re.compile(r"\b(?:without|no)\s+(?:gas\s+test|gas\s+testing|atmospheric\s+test|atmospheric\s+testing|gas\s+check)\b"),
-        re.compile(r"\b(?:skipped|omitted|neglected)\s+(?:gas\s+test|atmospheric\s+test|gas\s+monitoring)\b"),
+        re.compile(r"\b(?:without|no|not|missing|lacked|forgot|omitted|skipped|bypassed|neglected|failed\s+to(?:\s+conduct|\s+perform)?)\s+(?:to\s+)?(?:conduct\s+|perform\s+|do\s+)?(?:any\s+)?(?:gas|atmospheric|atmosphere|oxygen|air)\s+(?:test(?:ing)?|check(?:ing)?|sampling|monitoring|levels?|measurement)\b"),
+        re.compile(r"\b(?:gas|atmospheric|atmosphere|oxygen|air)\s+(?:levels?|sampling|test(?:ing)?|check(?:ing)?|monitoring)\s+(?:were|was|is|are)?\s*(?:not|never|omitted|skipped|forgotten|neglected)\s*(?:done|completed|conducted|performed|tested|checked|monitored|taken|measured)\b"),
+        re.compile(r"\b(?:not|never|forgot\s+to|omitted\s+to)\s+(?:tested|test|checked|check|monitored|sampled)\s+(?:for\s+gas|the\s+atmosphere|atmospheric|air\s+quality|oxygen|gas\s+levels)\b"),
+        re.compile(r"\b(?:without|no|forgot|skipped|omitted)\s+(?:gas\s+test|gas\s+testing|atmospheric\s+test|atmospheric\s+testing|gas\s+check)\b"),
+        re.compile(r"\b(?:skipped|omitted|neglected|forgot)\s+(?:gas\s+test|atmospheric\s+test|gas\s+monitoring)\b"),
         re.compile(r"\b(?:without|no)\s+(?:any\s+)?testing\b"),
         re.compile(r"\bentry\s+without\s+testing\b"),
     ],
     "Permit Not Obtained": [
-        re.compile(r"\b(?:without|no|not|missing|lacked|skipped|omitted|failed\s+to\s+obtain)\s+(?:any\s+)?(?:valid\s+)?(?:work\s+)?(?:permit|clearance|ptw|authorization|approval|entry\s+clearance|entry\s+permit)\b"),
+        re.compile(r"\b(?:without|no|not|missing|lacked|skipped|omitted|forgot|bypassed|failed\s+to\s+obtain)\s+(?:to\s+obtain\s+)?(?:any\s+)?(?:valid\s+)?(?:work\s+)?(?:permit|clearance|ptw|authorization|approval|entry\s+clearance|entry\s+permit)\b"),
         re.compile(r"\b(?:permit|ptw|authorization|clearance|entry\s+clearance|work\s+permit)\s+(?:was|were|is|are)?\s*(?:not|never)\s*(?:issued|obtained|authorized|approved|signed|granted)\b"),
         re.compile(r"\bentered\s+(?:.*?\s+)?without\s+(?:any\s+)?(?:clearance|permit|authorization|approval|ptw)\b"),
         re.compile(r"\bunauthorized\s+(?:entry|work|activity)\b"),
         re.compile(r"\bno\s+permit\s+was\s+issued\b"),
     ],
     "Fall Protection Not Used": [
-        re.compile(r"\b(?:without|no|not|missing|lacked)\s+(?:any\s+)?(?:safety\s+)?(?:harness|fall\s+protection|fall\s+arrest|guardrail|edge\s+protection|lifeline|safety\s+line|lanyard)\b"),
-        re.compile(r"\b(?:not|never)\s+(?:wearing|tied\s+off|hooked\s+up|attached|secured)\s+(?:with\s+)?(?:a\s+)?(?:safety\s+)?(?:harness|at\s+height|to\s+lifeline|fall\s+protection)?\b"),
+        re.compile(r"\b(?:without|no|not|missing|lacked|forgot|omitted|skipped|bypassed)\s+(?:any\s+)?(?:safety\s+)?(?:harness|fall\s+protection|fall\s+arrest|guardrail|edge\s+protection|lifeline|safety\s+line|lanyard)\b"),
+        re.compile(r"\b(?:not|never|forgot\s+to\s+wear)\s+(?:wearing|tied\s+off|hooked\s+up|attached|secured)\s+(?:with\s+)?(?:a\s+)?(?:safety\s+)?(?:harness|at\s+height|to\s+lifeline|fall\s+protection)?\b"),
         re.compile(r"\b(?:worker|technician|personnel|contractor|operator)\s+(?:was\s+|were\s+)?not\s+tied\s+off\b"),
         re.compile(r"\bunsecured\s+at\s+height\b"),
         re.compile(r"\bnot\s+tied\s+off\s+at\s+height\b"),
     ],
     "Lockout/Tagout Not Completed": [
-        re.compile(r"\b(?:without|no|not|missing)\s+(?:lockout|tagout|loto|breaker\s+lock|padlock)\b"),
+        re.compile(r"\b(?:without|no|not|missing|forgot|omitted|skipped|bypassed)\s+(?:lockout|tagout|loto|breaker\s+lock|padlock)\b"),
         re.compile(r"\b(?:lockout|tagout|loto)\s+(?:was|were)?\s*(?:not|never)\s*(?:applied|done|completed|performed|installed)\b"),
         re.compile(r"\bloto\s+not\s+(?:done|applied|completed)\b"),
     ],
     "Isolation Not Applied": [
-        re.compile(r"\b(?:without|no|not|missing)\s+(?:energy\s+)?(?:isolation|isolating)\b"),
+        re.compile(r"\b(?:without|no|not|missing|forgot|omitted|skipped|bypassed)\s+(?:energy\s+)?(?:isolation|isolating)\b"),
         re.compile(r"\b(?:energy|circuit|power|system|equipment|line)\s+(?:was|were)?\s*(?:not|never)\s*(?:isolated|de\s*energized|switched\s+off)\b"),
         re.compile(r"\b(?:live\s+circuit|energized\s+system)\s+(?:was\s+)?not\s+isolated\b"),
         re.compile(r"\bnot\s+de\s*energized\b"),
     ],
     "Standby Person Not Assigned": [
-        re.compile(r"\b(?:without|no|not|missing)\s+(?:any\s+)?(?:standby|standby\s+person|attendant|hole\s+watch|watcher|sentry)\b"),
+        re.compile(r"\b(?:without|no|not|missing|forgot|omitted)\s+(?:any\s+)?(?:standby|standby\s+person|attendant|hole\s+watch|watcher|sentry)\b"),
         re.compile(r"\b(?:standby(?:\s+person)?|attendant|hole\s+watch)\s+(?:was|were)?\s*(?:not|never)\s*(?:assigned|present|posted|stationed|available)\b"),
     ],
     "Exclusion Zone Not Established": [
-        re.compile(r"\b(?:without|no|not|missing)\s+(?:any\s+)?(?:exclusion\s+zone|barricade|perimeter|drop\s+zone|warning\s+tape)\b"),
+        re.compile(r"\b(?:without|no|not|missing|forgot|omitted)\s+(?:any\s+)?(?:exclusion\s+zone|barricade|perimeter|drop\s+zone|warning\s+tape)\b"),
         re.compile(r"\b(?:exclusion\s+zone|barricade)\s+(?:was|were)?\s*(?:not|never)\s*(?:established|set\s+up|created|posted|demarcated)\b"),
         re.compile(r"\bstanding\s+(?:under|below|beneath)\s+(?:a\s+)?(?:suspended\s+)?load\b"),
     ],
     "Fire Watch Not Posted": [
-        re.compile(r"\b(?:without|no|not|missing)\s+(?:any\s+)?(?:fire\s+watch|fire\s+guard|spark\s+watch)\b"),
+        re.compile(r"\b(?:without|no|not|missing|forgot|omitted)\s+(?:any\s+)?(?:fire\s+watch|fire\s+guard|spark\s+watch)\b"),
         re.compile(r"\b(?:fire\s+watch|fire\s+guard)\s+(?:was|were)?\s*(?:not|never)\s*(?:posted|assigned|present|available|stationed)\b"),
     ],
     "PPE Not Available": [
-        re.compile(r"\b(?:without|no|not|missing)\s+(?:any\s+)?(?:ppe|protective\s+equipment|gloves|safety\s+glasses|eye\s+protection|helmet|hard\s+hat|mask|respirator)\b"),
+        re.compile(r"\b(?:without|no|not|missing|forgot|omitted)\s+(?:any\s+)?(?:ppe|protective\s+equipment|gloves|safety\s+glasses|eye\s+protection|helmet|hard\s+hat|mask|respirator)\b"),
         re.compile(r"\bnot\s+wearing\s+(?:any\s+)?(?:ppe|gloves|safety\s+glasses|eye\s+protection|helmet|hard\s+hat|mask|respirator|protection)\b"),
     ],
     "Pressure Not Released": [
-        re.compile(r"\b(?:not|never|was\s+not)\s+(?:depressurized|vented|bled|drained)\b"),
+        re.compile(r"\b(?:not|never|was\s+not|forgot\s+to|omitted\s+to)\s+(?:depressurized|vented|bled|drained)\b"),
         re.compile(r"\b(?:pressure|line|vessel|system)\s+(?:was\s+)?(?:not\s+released|still\s+under\s+pressure|not\s+depressurized|not\s+bled|not\s+vented)\b"),
         re.compile(r"\bresidual\s+pressure\s+(?:not\s+bled|remained)\b"),
     ],
@@ -562,9 +672,11 @@ def detect_barriers_with_evidence(text: str) -> List[Dict[str, Any]]:
         b["detection_reason"] = generate_detection_reason(b["barrier"], b["method"], b["evidence"])
 
     # ── Stage I: Ranking & Top-K Truncation
-    context_validated.sort(key=lambda x: x["confidence_score"], reverse=True)
+    context_validated.sort(key=lambda x: (-float(x["confidence_score"]), str(x["barrier"])))
     TOP_K = 3
-    return context_validated[:TOP_K]
+    result = context_validated[:TOP_K]
+    logger.info(f"[BARRIER_DETECTED] count={len(result)} barriers={[b['barrier'] for b in result]}")
+    return result
 
 
 def detect_barriers(text: str) -> List[str]:

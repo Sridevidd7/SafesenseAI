@@ -9,7 +9,10 @@ Features:
 """
 from typing import Dict, List, Set, Any, Optional, Tuple
 import re
+import logging
 from services.barrier_dictionary import normalize_text, NON_INDUSTRIAL_CONTEXT, INDUSTRIAL_INDICATORS
+
+logger = logging.getLogger("safesense.rule_classifier")
 
 # ─── 1. STRUCTURED RULE DEFINITIONS ───────────────────────────────────────────
 
@@ -221,7 +224,7 @@ def classify_life_saving_rule(text: str) -> Dict[str, Any]:
             "scores": {}
         }
 
-    sorted_rules = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    sorted_rules = sorted(scores.items(), key=lambda x: (-x[1], x[0]))
     primary_rule, primary_score = sorted_rules[0]
     secondary_rule: Optional[str] = None
 
@@ -230,6 +233,8 @@ def classify_life_saving_rule(text: str) -> Dict[str, Any]:
         # Keep secondary rule if score difference <= 3 or secondary has substantial weight (>= 5)
         if abs(primary_score - sec_score) <= 3 or (sec_score >= 5 and sec_score >= primary_score * 0.4):
             secondary_rule = sec_rule
+
+    logger.info(f"[RULE_SELECTED] primary_rule='{primary_rule}' secondary_rule='{secondary_rule}' score={primary_score}")
 
     return {
         "primary_rule": primary_rule,

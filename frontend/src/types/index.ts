@@ -81,6 +81,7 @@ export interface ReportAnalysis {
   hazard_detected: string;
   barrier_failure: string;
   barrier_failures?: string[];
+  risk_reason?: string;
   confidence?: number;
   confidence_level?: 'HIGH' | 'MEDIUM' | 'LOW' | string;
   negation_type?: string;
@@ -249,6 +250,7 @@ export interface User {
   email: string;
   role: 'HSE Officer' | 'Safety Manager' | 'Site Manager' | 'Administrator';
   site?: string;
+  token?: string;
 }
 
 export interface AuthState {

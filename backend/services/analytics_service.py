@@ -241,10 +241,17 @@ def get_pattern_intelligence(db: Session) -> dict[str, Any]:
             "repeated_failures": [],
             "anomalies":         [],
             "insights":          [],
-            "trend_summary":     {"trend": "STABLE", "reason": "No data available."}
+            "trend_summary":     {
+                "trend": "STABLE",
+                "reason": "Insufficient data for reliable trend analysis",
+                "trend_note": "Insufficient data for reliable trend analysis"
+            }
         }
 
     reports_data = get_all_reports_dicts(db)
+    if len(reports_data) != total_count:
+        logger.warning(f"[DATA_MISMATCH] total_reports_query={total_count} reports_fetched={len(reports_data)}")
+
     clusters = cluster_reports(reports_data)
     repeated = detect_repeated_failures(clusters)
     monthly = get_monthly_trends(db)
@@ -252,7 +259,7 @@ def get_pattern_intelligence(db: Session) -> dict[str, Any]:
 
     counts = [int(m.get("total", 0)) for m in monthly]
     labels = [m.get("month", "") for m in monthly]
-    trend_info = classify_trend(counts, labels)
+    trend_info = classify_trend(counts, labels, total_reports=total_count)
     anomalies = detect_anomalies(monthly, sites)
     insights = generate_insights(reports_data, clusters, monthly, sites)
 

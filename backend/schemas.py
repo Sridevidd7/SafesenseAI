@@ -56,6 +56,7 @@ class ReportResponse(BaseModel):
     risk_score:    int
     sif_potential: str
     risk_level:    str
+    risk_reason:   str | None = None
     site:          str = "Site Alpha"
     activity:      str = "General Operation"
     date:          str | None = None
@@ -92,6 +93,7 @@ class ProcessedRowSchema(BaseModel):
     category:      str    = Field(description="Life-Saving Rule category detected")
     risk_score:    int    = Field(description="Risk score 0–100")
     risk_level:    str    = Field(description="LOW | MEDIUM | HIGH | CRITICAL")
+    risk_reason:   str | None = Field(default=None, description="Short explanation of WHY score is high/low")
     sif_potential: str    = Field(description="YES | NO")
     site:          str    = Field(default="Site Alpha", description="Facility or site name")
     activity:      str    = Field(default="General Operation", description="Activity or task name")

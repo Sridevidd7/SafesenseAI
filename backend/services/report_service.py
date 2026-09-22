@@ -117,6 +117,7 @@ def analyze_text(description: str) -> dict[str, Any]:
         "confidence_level": analysis["confidence_level"],
         "risk_score":       analysis["risk_score"],
         "risk_level":       analysis["risk_level"],
+        "risk_reason":      analysis.get("risk_reason"),
         "sif_potential":    analysis["sif_potential"],
         "negation_type":    analysis["negation_type"],
         "explanation":      analysis["explanation"],

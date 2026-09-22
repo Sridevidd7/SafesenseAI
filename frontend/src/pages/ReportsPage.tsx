@@ -76,28 +76,30 @@ export default function ReportsPage() {
   };
 
 
+  const safeReports = useMemo(() => Array.isArray(reports) ? reports : [], [reports]);
+
   // Unique categories for the dropdown — derived dynamically from fetched data
   const categories = useMemo(
-    () => [...new Set(reports.map(r => r.category).filter(Boolean))].sort(),
-    [reports]
+    () => [...new Set(safeReports.map(r => r?.category).filter(Boolean))].sort(),
+    [safeReports]
   );
 
   // Filter
   const filtered = useMemo(() => {
-    let r = reports;
+    let r = safeReports;
     if (search) {
       const s = search.toLowerCase();
       r = r.filter(rep =>
-        rep.description.toLowerCase().includes(s) ||
-        String(rep.id).includes(s) ||
-        rep.category.toLowerCase().includes(s)
+        (rep.description || '').toLowerCase().includes(s) ||
+        String(rep.id || rep.report_id || '').includes(s) ||
+        (rep.category || '').toLowerCase().includes(s)
       );
     }
     if (filterSIF)      r = r.filter(rep => rep.sif_potential === filterSIF);
     if (filterLevel)    r = r.filter(rep => rep.risk_level    === filterLevel);
     if (filterCategory) r = r.filter(rep => rep.category      === filterCategory);
     return r;
-  }, [reports, search, filterSIF, filterLevel, filterCategory]);
+  }, [safeReports, search, filterSIF, filterLevel, filterCategory]);
 
   // Sort
   const sorted = useMemo(() => {
@@ -210,7 +212,7 @@ export default function ReportsPage() {
           <h1 className="section-title">Safety Reports</h1>
           <p className="section-sub">
             {sorted.length} of {total} reports ·{' '}
-            {reports.filter(r => r.sif_potential === 'YES').length} with SIF potential ·{' '}
+            {safeReports.filter(r => r.sif_potential === 'YES').length} with SIF potential ·{' '}
             <span className="text-slate-500 font-medium">Live from database</span>
           </p>
         </div>

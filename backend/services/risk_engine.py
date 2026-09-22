@@ -63,8 +63,10 @@ PREVENTIVE_STOP_REGEX = re.compile(
     r"\b("
     r"(?:did\s+not|didn't|does\s+not|doesn't|would\s+not|wouldn't|refused\s+to|decided\s+not\s+to|opted\s+not\s+to|declined\s+to)\s+(?:proceed|enter|start|commence|work|operate|continue|execute|climb|step|go\s+into|begin|resume)|"
     r"(?:work|job|entry|task|operation|activity|maintenance|welding|lifting|pour|process)\s+(?:was\s+)?(?:stopped|halted|suspended|aborted|cancelled|put\s+on\s+hold|paused|delayed|refused|prevented|ceased)|"
-    r"stopped\s+(?:work|entry|task|job|activity|operation|hot\s+work|maintenance|welding|climbing)?|"
-    r"halted\s+(?:work|entry|task|job|activity|operation)?|"
+    r"(?:ordered|issued|enforced)\s+(?:a\s+)?stop[\s-]?work|"
+    r"stop[\s-]?work|"
+    r"stopped\s+(?:work|the\s+work|entry|task|job|activity|operation|hot\s+work|maintenance|welding|climbing)?|"
+    r"halted\s+(?:work|the\s+work|entry|task|job|activity|operation)?|"
     r"aborted\s+(?:entry|operation|task|job|activity)?|"
     r"suspended\s+(?:work|entry|task|job|activity|operation)?|"
     r"avoided\s+(?:entering|working|climbing|proceeding|operating|starting|entry|work)?|"
@@ -477,6 +479,49 @@ def calculate_confidence(
     }
 
 
+def generate_risk_reason(
+    risk_score: int,
+    risk_level: str,
+    lsr: str,
+    barrier_failures: List[str],
+    neg_type: str = "NONE",
+    text: str = ""
+) -> str:
+    """
+    Risk Score Justification Layer:
+    Generates a concise, deterministic explanation of WHY a risk score is high/low.
+    Example: 'High risk due to multiple barrier failures and unsafe entry into confined space'
+    """
+    clean_barriers = [b for b in barrier_failures if b and b != "Unknown Barrier Failure" and not b.startswith("Prevented:")]
+    rule_desc = lsr.lower() if lsr and lsr != "General Safety" else "operations"
+
+    if neg_type == "SAFE_PREVENTIVE":
+        if clean_barriers:
+            return f"Low risk due to proactive stop-work intervention preventing {clean_barriers[0]} during {rule_desc}."
+        return f"Low risk due to proactive safety intervention avoiding hazard exposure before work began."
+
+    if neg_type == "AMBIGUOUS":
+        if clean_barriers:
+            return f"Medium risk due to uncertain operational controls and potential {clean_barriers[0]} in {rule_desc}."
+        return f"Medium risk due to ambiguous operational context and unconfirmed safety controls."
+
+    if risk_level in ("CRITICAL", "HIGH"):
+        if len(clean_barriers) >= 2:
+            if "confined space" in rule_desc:
+                return "High risk due to multiple barrier failures and unsafe entry into confined space" if risk_level == "HIGH" else "Critical risk due to multiple barrier failures and unsafe entry into confined space"
+            return f"{risk_level.capitalize()} risk due to multiple barrier failures ({', '.join(clean_barriers[:2])}) and unsafe activity in {rule_desc}"
+        elif len(clean_barriers) == 1:
+            return f"{risk_level.capitalize()} risk due to missing {clean_barriers[0]} during unsafe {rule_desc} activity"
+        else:
+            return f"{risk_level.capitalize()} risk due to unmitigated high-severity hazard exposure in {rule_desc}"
+    elif risk_level == "MEDIUM":
+        if clean_barriers:
+            return f"Medium risk due to potential {clean_barriers[0]} identified in {rule_desc}."
+        return f"Medium risk due to moderate hazard exposure without verified critical barrier breach."
+    else:
+        return f"Low risk due to routine operational conditions with no major barrier failures in {rule_desc}."
+
+
 def calculate_risk_score(report: Dict) -> Dict:
     text = report.get("report_text", "")
     lower = text.lower()
@@ -535,10 +580,13 @@ def calculate_risk_score(report: Dict) -> Dict:
         total = min(100, hazard_severity + barrier_score + exposure_score + activity_score + recurrence_score)
         level = "CRITICAL" if total > 80 else ("HIGH" if total > 60 else ("MEDIUM" if total > 30 else "LOW"))
 
+    risk_reason = generate_risk_reason(total, level, lsr, barrier_failures, neg_type, text)
+
     return {
         "risk_score": total,
         "raw_score": total,
         "risk_level": level,
+        "risk_reason": risk_reason,
         "barrier_failures": barrier_failures,
         "primary_barrier": primary_barrier,
         "negation_type": neg_type,
@@ -558,17 +606,34 @@ def calculate_risk_score(report: Dict) -> Dict:
 def analyze_report(report: Dict) -> Dict:
     """
     Main analysis pipeline:
-    1. Adversarial Guard & Quality Check
-    2. Temporal & Clause Segmentation (Multi-stage timeline)
-    3. Rule Classification & Barrier Detection
-    4. Multi-Phase Sequence Resolution (Last unsafe state dominates unless final safe)
-    5. Calibrated System Confidence Calculation & Reason Formulation
-    6. Safe Dataset-Aware Risk Normalization (std_dev < 5 guard)
-    7. Strict Validation & Explicit Fallback Contract
+    1. Input Validation & Edge-Case Protection (<10 chars, >1000 chars, null/malformed)
+    2. Adversarial Guard & Quality Check
+    3. Temporal & Clause Segmentation (Multi-stage timeline)
+    4. Rule Classification & Barrier Detection
+    5. Multi-Phase Sequence Resolution (Last unsafe state dominates unless final safe)
+    6. Calibrated System Confidence Calculation & Reason Formulation
+    7. Safe Dataset-Aware Risk Normalization (std_dev < 5 guard)
+    8. Strict Validation & Explicit Fallback Contract
     """
+    if not isinstance(report, dict):
+        logger.warning("[FALLBACK_TRIGGER] reason='Input is not a dictionary' text=''")
+        return safe_fallback_analysis("", reason="Input is not a dictionary")
+
     text = report.get("report_text", "")
     if not text and report.get("description"):
         text = report.get("description")
+    if not isinstance(text, str):
+        text = str(text or "")
+
+    clean_text = text.strip()
+    if not clean_text or len(clean_text) < 10:
+        logger.warning(f"[FALLBACK_TRIGGER] reason='Input text is empty or too short (<10 chars)' text='{clean_text}'")
+        return safe_fallback_analysis(clean_text, reason="Input text is empty or too short (<10 chars)")
+
+    # Bound extremely long input to prevent regex or memory issues
+    if len(clean_text) > 2000:
+        clean_text = clean_text[:2000]
+    text = clean_text
 
     try:
         # Step 1: Adversarial & Input Quality Guard
@@ -714,6 +779,7 @@ def analyze_report(report: Dict) -> Dict:
             "normalized_score": normalized_score,
             "normalization_applied": normalization_applied,
             "risk_level": level,
+            "risk_reason": risk_data.get("risk_reason") or generate_risk_reason(score, level, lsr, display_barriers, neg_type, text),
             "barrier_failures": display_barriers,
             "barrier_failure": display_barriers[0] if display_barriers else "Unknown Barrier Failure",  # backward compat
             "barrier_evidence": barrier_evidence,
@@ -746,11 +812,12 @@ def analyze_report(report: Dict) -> Dict:
 
         # Step 9: Strict Validation & Fallback Guard
         validated_output = validate_analysis_output(raw_output, raw_text=text)
+        logger.info(f"[FINAL_OUTPUT] risk_score={validated_output['risk_score']} risk_level={validated_output['risk_level']} rule={validated_output['life_saving_rule']} source={validated_output.get('source')} sif={validated_output.get('sif_potential')}")
         logger.info(f"[FINAL_MERGED_RESULT] source={validated_output.get('source')} risk_score={validated_output['risk_score']} level={validated_output['risk_level']} barriers={validated_output['barrier_failures']}")
         return validated_output
 
     except Exception as exc:
-        logger.exception(f"Exception during analyze_report for text: '{text[:60]}...'")
+        logger.warning(f"[FALLBACK_TRIGGER] reason='Exception: {str(exc)}' text='{text[:60]}...'")
         return safe_fallback_analysis(text, reason=str(exc))
 
 

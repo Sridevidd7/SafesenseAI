@@ -82,10 +82,27 @@ export interface UploadResult {
 
 // ─── Base fetch wrapper ───────────────────────────────────────────────────────
 
+function getAuthHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  try {
+    const token = localStorage.getItem('token');
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+  } catch {
+    // ignore
+  }
+  return headers;
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const authHeaders = getAuthHeaders();
   const res = await fetch(`/api${path}`, {
-    headers: { 'Content-Type': 'application/json' },
     ...init,
+    headers: {
+      ...authHeaders,
+      ...(init?.headers as Record<string, string> || {}),
+    },
   });
 
   if (!res.ok) {
@@ -146,7 +163,8 @@ export async function fetchRiskIntelligenceTrends(): Promise<TrendPoint[]> {
  * Returns monthly trend data along with AI trend classifications, reasons, and anomalies.
  */
 export async function fetchTrendsIntelligence(): Promise<TrendsIntelligenceResponse> {
-  const res = await fetch('/api/risk-intelligence/trends', { headers: { 'Content-Type': 'application/json' } });
+  const authHeaders = getAuthHeaders();
+  const res = await fetch('/api/risk-intelligence/trends', { headers: authHeaders });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
@@ -194,7 +212,34 @@ export async function fetchReports(params?: FetchReportsParams): Promise<Reports
   if (params?.limit !== undefined) query.set('limit', String(params.limit));
   if (params?.offset !== undefined) query.set('offset', String(params.offset));
   const qs = query.toString() ? `?${query.toString()}` : '';
-  return apiFetch<ReportsListResponse>(`/reports${qs}`);
+
+  const authHeaders = getAuthHeaders();
+  const res = await fetch(`/api/reports${qs}`, { headers: authHeaders });
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      const body = await res.json();
+      detail = body.detail ?? detail;
+    } catch {
+      // ignore
+    }
+    throw new Error(detail);
+  }
+
+  const json = await res.json();
+  if (Array.isArray(json)) {
+    return { total: json.length, reports: json };
+  }
+  if (json && typeof json === 'object') {
+    const list = Array.isArray(json.reports)
+      ? json.reports
+      : (Array.isArray(json.data) ? json.data : []);
+    const totalCount = typeof json.total === 'number'
+      ? json.total
+      : list.length;
+    return { total: totalCount, reports: list };
+  }
+  return { total: 0, reports: [] };
 }
 
 export interface AnalyzeReportPayload {
@@ -240,9 +285,18 @@ export async function uploadReportsCSV(file: File): Promise<UploadResult> {
   const form = new FormData();
   form.append('file', file, file.name);
 
+  const headers: Record<string, string> = {};
+  try {
+    const token = localStorage.getItem('token');
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+  } catch {
+    // ignore
+  }
+
   const res = await fetch('/api/reports/upload', {
     method: 'POST',
     body:   form,
+    headers,
   });
 
   if (!res.ok) {

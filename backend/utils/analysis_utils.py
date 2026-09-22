@@ -292,6 +292,7 @@ def safe_fallback_analysis(report_text: str = "", reason: str = "Fallback trigge
         "normalized_score": 0.50,
         "normalization_applied": False,
         "risk_level": "MEDIUM",
+        "risk_reason": "Medium risk evaluated under safe fallback mode due to unclear or limited input.",
         "barrier_failures": ["Unknown Barrier Failure"],
         "barrier_failure": "Unknown Barrier Failure",
         "barrier_evidence": [],
@@ -326,7 +327,7 @@ def validate_analysis_output(result: Dict[str, Any], raw_text: str = "") -> Dict
     Strict validation layer enforcing:
     - Clamping risk_score within [0, 100]
     - Fallback trigger if invalid rule or unhandled high-risk contradiction
-    - Ensuring all contract fields are present
+    - Ensuring all contract fields are present (including risk_reason)
     """
     if not isinstance(result, dict):
         return safe_fallback_analysis(raw_text, "Output is not a valid dictionary")
@@ -385,11 +386,17 @@ def validate_analysis_output(result: Dict[str, Any], raw_text: str = "") -> Dict
 
         result["barrier_failure"] = result["barrier_failures"][0]
 
-        # 6. SIF Potential Validation
+        # 6. Risk Reason Justification
+        if not result.get("risk_reason"):
+            lvl = result["risk_level"]
+            primary_b = result["barrier_failures"][0]
+            result["risk_reason"] = f"{lvl.capitalize()} risk due to {primary_b} in {lsr} operations."
+
+        # 7. SIF Potential Validation
         sif = str(result.get("sif_potential", "NO")).upper()
         result["sif_potential"] = sif if sif in ("YES", "NO", "UNKNOWN") else "NO"
 
-        # 7. Source marker
+        # 8. Source marker
         result["source"] = result.get("source") or "engine"
 
         return result

@@ -32,9 +32,13 @@ export function useApiReports(): UseApiReports {
 
     try {
       const data = await fetchReports();
-      setReports(data.reports);
-      setTotal(data.total);
-      return data;
+      const list = Array.isArray(data?.reports)
+        ? data.reports
+        : (Array.isArray(data) ? (data as unknown as ApiReport[]) : []);
+      const totalCount = typeof data?.total === 'number' ? data.total : list.length;
+      setReports(list);
+      setTotal(totalCount);
+      return { total: totalCount, reports: list };
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Backend unavailable';
       setError(msg);
