@@ -26,7 +26,7 @@ class Report(Base):
     __tablename__ = "reports"
 
     report_id     = Column(String(64),    primary_key=True, index=True)
-    content_hash  = Column(String(64),    unique=True, index=True, nullable=True)
+    content_hash  = Column(String(64),    unique=True, nullable=True)
     description   = Column(Text,          nullable=False)
     category      = Column(String(100),   nullable=False, default="General Safety")
     risk_level    = Column(String(10),    nullable=False, default="LOW")
