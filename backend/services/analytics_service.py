@@ -1,12 +1,13 @@
-﻿"""
+"""
 services/analytics_service.py — Single source of truth for all SafeSense AI analytics.
 
 All queries execute directly against SQLite (safety.db -> reports table).
 Guarantees:
 - Reusable shared query functions
 - Empty arrays [] on empty data (never null or undefined)
-- Debug logging of row counts and results
+- Structured logging & debug logging of row counts and results
 - Unified aggregation across Dashboard, Trends, Patterns, Sites, Activities, and Command Center
+- Cache refresh hooks for dataset upload, reset, and manual trigger
 """
 from __future__ import annotations
 
@@ -48,12 +49,21 @@ class DashboardData:
 def get_total_reports(db: Session) -> int:
     """Return total count of records in the reports table."""
     count = db.query(func.count(Report.report_id)).scalar() or 0
-    print(f"[analytics_service] Total reports: {count}")
-    return int(count)
+    total = int(count)
+    logger.info(f"[{datetime.now(timezone.utc).isoformat()}] EVENT=query_total_reports TOTAL_REPORTS={total}")
+    print("Total reports:", total)
+    return total
 
 
 def get_risk_distribution(db: Session) -> dict[str, int]:
     """Return report counts grouped by risk level (CRITICAL, HIGH, MEDIUM, LOW)."""
+    total = get_total_reports(db)
+    if total == 0:
+        distribution = {level: 0 for level in RISK_LEVEL_ORDER}
+        logger.info(f"[{datetime.now(timezone.utc).isoformat()}] EVENT=query_risk_distribution TOTAL_REPORTS=0 RESULT={distribution}")
+        print("Risk distribution:", distribution)
+        return distribution
+
     rows = (
         db.query(Report.risk_level, func.count(Report.report_id))
         .group_by(Report.risk_level)
@@ -61,13 +71,24 @@ def get_risk_distribution(db: Session) -> dict[str, int]:
     )
     raw = {str(row[0]).upper(): int(row[1]) for row in rows if row[0]}
     distribution = {level: raw.get(level, 0) for level in RISK_LEVEL_ORDER}
-    print(f"[analytics_service] Risk distribution: {distribution}")
+    logger.info(f"[{datetime.now(timezone.utc).isoformat()}] EVENT=query_risk_distribution TOTAL_REPORTS={total} RESULT={distribution}")
+    print("Risk distribution:", distribution)
     return distribution
 
 
 def get_sif_count(db: Session) -> dict[str, Any]:
     """Return SIF potential statistics (sif_count, non_sif_count, sif_percentage)."""
     total = get_total_reports(db)
+    if total == 0:
+        res = {
+            "sif_count": 0,
+            "non_sif_count": 0,
+            "sif_percentage": 0.0,
+        }
+        logger.info(f"[{datetime.now(timezone.utc).isoformat()}] EVENT=query_sif_count TOTAL_REPORTS=0 RESULT={res}")
+        print("SIF statistics:", res)
+        return res
+
     rows = (
         db.query(Report.sif_potential, func.count(Report.report_id))
         .group_by(Report.sif_potential)
@@ -83,7 +104,8 @@ def get_sif_count(db: Session) -> dict[str, Any]:
         "non_sif_count": non_sif_count,
         "sif_percentage": sif_percentage,
     }
-    print(f"[analytics_service] SIF statistics: {result}")
+    logger.info(f"[{datetime.now(timezone.utc).isoformat()}] EVENT=query_sif_count TOTAL_REPORTS={total} RESULT={result}")
+    print("SIF statistics:", result)
     return result
 
 
@@ -91,7 +113,8 @@ def get_monthly_trends(db: Session) -> list[dict[str, Any]]:
     """Compute monthly risk and precursor trends from reports."""
     total_count = get_total_reports(db)
     if total_count == 0:
-        print("[analytics_service] Monthly trends: 0 reports found -> returning []")
+        logger.info(f"[{datetime.now(timezone.utc).isoformat()}] EVENT=query_monthly_trends TOTAL_REPORTS=0 ROWS_RETURNED=0")
+        print("Trend rows: []")
         return []
 
     sql = text("""
@@ -119,7 +142,7 @@ def get_monthly_trends(db: Session) -> list[dict[str, Any]]:
             })
 
     # If date strings could not be grouped by strftime (e.g. non-standard date format),
-    # aggregate them into an overall monthly window rather than returning an empty array
+    # aggregate them into an overall monthly window rather than returning empty
     if not results and total_count > 0:
         sif_stats = get_sif_count(db)
         risk_dist = get_risk_distribution(db)
@@ -131,61 +154,129 @@ def get_monthly_trends(db: Session) -> list[dict[str, Any]]:
             "critical": risk_dist.get("CRITICAL", 0),
         })
 
-    print(f"[analytics_service] Trend rows ({len(results)}): {results}")
+    logger.info(f"[{datetime.now(timezone.utc).isoformat()}] EVENT=query_monthly_trends TOTAL_REPORTS={total_count} ROWS_RETURNED={len(results)}")
+    print("Trend rows:", results)
     return results
+
+
+from services.pattern_engine import (
+    cluster_reports,
+    detect_repeated_failures,
+    classify_trend,
+    detect_anomalies,
+    generate_insights,
+)
+
+
+from utils.analysis_utils import normalize_risk_score
+
+
+def get_all_reports_dicts(db: Session) -> list[dict[str, Any]]:
+    """Fetch all reports as dicts for similarity clustering and pattern intelligence with dataset normalization."""
+    reports = db.query(Report).all()
+    if not reports:
+        return []
+
+    scores = [r.risk_score for r in reports if r.risk_score is not None]
+    mean_risk = sum(scores) / len(scores) if scores else 50.0
+    if len(scores) > 1:
+        variance = sum((s - mean_risk) ** 2 for s in scores) / (len(scores) - 1)
+        std_dev = variance ** 0.5
+    else:
+        std_dev = 20.0
+
+    res = []
+    for r in reports:
+        norm = normalize_risk_score(r.risk_score, mean_risk=mean_risk, std_dev=std_dev)
+        res.append({
+            "report_id":             r.report_id,
+            "description":           r.description,
+            "report_text":           r.description,
+            "category":              r.category,
+            "barrier":               getattr(r, "barrier", None),
+            "site":                  r.site,
+            "activity":              r.activity,
+            "risk_score":            r.risk_score,
+            "raw_score":             r.risk_score,
+            "normalized_score":      norm["normalized_score"],
+            "normalization_applied": norm["normalization_applied"],
+            "risk_level":            r.risk_level,
+            "sif_potential":         r.sif_potential,
+            "date":                  r.date,
+            "created_at":            r.created_at,
+        })
+    return res
+
+
 
 
 def get_category_patterns(db: Session) -> list[dict[str, Any]]:
-    """Group reports by Life-Saving Rule category to build recurring pattern clusters."""
+    """
+    Similarity-based clustering of safety reports.
+    Replaces raw SQL GROUP BY with Jaccard similarity clustering and pattern analysis.
+    """
     total_count = get_total_reports(db)
     if total_count == 0:
-        print("[analytics_service] Category patterns: 0 reports found -> returning []")
+        logger.info(f"[{datetime.now(timezone.utc).isoformat()}] EVENT=query_category_patterns TOTAL_REPORTS=0 ROWS_RETURNED=0")
+        print("Category patterns: []")
         return []
 
-    sql = text("""
-        SELECT 
-            category,
-            COUNT(*) as count,
-            GROUP_CONCAT(DISTINCT site) as sites,
-            AVG(risk_score) as avg_score,
-            SUM(CASE WHEN UPPER(risk_level)='CRITICAL' THEN 1 ELSE 0 END) as critical_count
-        FROM reports
-        WHERE category IS NOT NULL AND category != ''
-        GROUP BY category
-        ORDER BY count DESC;
-    """)
-    rows = db.execute(sql).fetchall()
-    results: list[dict[str, Any]] = []
+    reports_data = get_all_reports_dicts(db)
+    clusters = cluster_reports(reports_data)
 
-    for r in rows:
-        cat = r[0] or "General Safety"
-        cnt = int(r[1] or 0)
-        site_str = r[2] or ""
-        site_list = [s.strip() for s in site_str.split(",") if s.strip()] if site_str else ["Site Alpha"]
-        avg_score = float(r[3] or 0)
-        crit_cnt = int(r[4] or 0)
-        lvl = "CRITICAL" if crit_cnt > 0 or avg_score >= 75 else ("HIGH" if avg_score >= 50 else "MEDIUM")
+    logger.info(f"[{datetime.now(timezone.utc).isoformat()}] EVENT=query_category_patterns TOTAL_REPORTS={total_count} CLUSTERS_FOUND={len(clusters)}")
+    print("Similarity pattern clusters:", clusters)
+    return clusters
 
-        results.append({
-            "category":    cat,
-            "count":       cnt,
-            "name":        cat,
-            "description": f"Recurring precursor pattern in {cat} with {cnt} documented observations across operations.",
-            "frequency":   cnt,
-            "risk_level":  lvl,
-            "sites":       site_list,
-            "trend":       "increasing" if crit_cnt > 1 else "stable",
-        })
 
-    print(f"[analytics_service] Category patterns ({len(results)}): {results}")
-    return results
+def get_pattern_intelligence(db: Session) -> dict[str, Any]:
+    """
+    Comprehensive Insight & Pattern Engine:
+    Returns similarity clusters, recurring failure detections, trend classifications, anomalies, and AI insights.
+    """
+    total_count = get_total_reports(db)
+    if total_count == 0:
+        return {
+            "clusters":          [],
+            "repeated_failures": [],
+            "anomalies":         [],
+            "insights":          [],
+            "trend_summary":     {"trend": "STABLE", "reason": "No data available."}
+        }
+
+    reports_data = get_all_reports_dicts(db)
+    clusters = cluster_reports(reports_data)
+    repeated = detect_repeated_failures(clusters)
+    monthly = get_monthly_trends(db)
+    sites = get_site_stats(db)
+
+    counts = [int(m.get("total", 0)) for m in monthly]
+    labels = [m.get("month", "") for m in monthly]
+    trend_info = classify_trend(counts, labels)
+    anomalies = detect_anomalies(monthly, sites)
+    insights = generate_insights(reports_data, clusters, monthly, sites)
+
+    return {
+        "clusters":          clusters,
+        "repeated_failures": repeated,
+        "anomalies":         anomalies,
+        "insights":          insights,
+        "trend_summary":     trend_info
+    }
+
+
+def get_all_insights(db: Session) -> list[dict[str, Any]]:
+    """Return all synthesized AI insights."""
+    intel = get_pattern_intelligence(db)
+    return intel.get("insights", [])
 
 
 def get_site_stats(db: Session) -> list[dict[str, Any]]:
     """Group reports by site facility and compute risk ranking metrics."""
     total_count = get_total_reports(db)
     if total_count == 0:
-        print("[analytics_service] Site stats: 0 reports found -> returning []")
+        logger.info(f"[{datetime.now(timezone.utc).isoformat()}] EVENT=query_site_stats TOTAL_REPORTS=0 ROWS_RETURNED=0")
+        print("Site stats: []")
         return []
 
     sql = text("""
@@ -222,7 +313,8 @@ def get_site_stats(db: Session) -> list[dict[str, Any]]:
             "top_barrier_failure":  "Control Verification",
         })
 
-    print(f"[analytics_service] Site stats ({len(results)}): {results}")
+    logger.info(f"[{datetime.now(timezone.utc).isoformat()}] EVENT=query_site_stats TOTAL_REPORTS={total_count} ROWS_RETURNED={len(results)}")
+    print("Site stats:", results)
     return results
 
 
@@ -230,7 +322,8 @@ def get_activity_stats(db: Session) -> list[dict[str, Any]]:
     """Group reports by operational activity and compute risk ranking metrics."""
     total_count = get_total_reports(db)
     if total_count == 0:
-        print("[analytics_service] Activity stats: 0 reports found -> returning []")
+        logger.info(f"[{datetime.now(timezone.utc).isoformat()}] EVENT=query_activity_stats TOTAL_REPORTS=0 ROWS_RETURNED=0")
+        print("Activity stats: []")
         return []
 
     sql = text("""
@@ -266,7 +359,8 @@ def get_activity_stats(db: Session) -> list[dict[str, Any]]:
             "top_barrier_failure": "Permit / Verification",
         })
 
-    print(f"[analytics_service] Activity stats ({len(results)}): {results}")
+    logger.info(f"[{datetime.now(timezone.utc).isoformat()}] EVENT=query_activity_stats TOTAL_REPORTS={total_count} ROWS_RETURNED={len(results)}")
+    print("Activity stats:", results)
     return results
 
 
@@ -313,7 +407,7 @@ def get_dashboard_data(db: Session) -> DashboardData:
         top_category          = top_category,
         top_risk_level        = top_risk_level,
     )
-    print(f"[analytics_service] Dashboard summary computed: total={data.total_reports}, avg_score={data.avg_risk_score}")
+    logger.info(f"[{datetime.now(timezone.utc).isoformat()}] EVENT=compute_dashboard_summary TOTAL_REPORTS={total_reports} AVG_SCORE={avg_risk_score}")
     return data
 
 
@@ -343,8 +437,24 @@ def get_command_center_data(db: Session) -> dict[str, Any]:
         "early_warnings_count":  critical_alerts,
         "high_priority_reports": high_priority or [],
     }
-    print(f"[analytics_service] Command center metrics: total={total_reports}, critical={critical_alerts}, open_actions={open_actions}")
+    logger.info(f"[{datetime.now(timezone.utc).isoformat()}] EVENT=compute_command_center TOTAL_REPORTS={total_reports} CRITICAL={critical_alerts} OPEN_ACTIONS={open_actions}")
     return result
+
+
+def get_debug_counts(db: Session) -> dict[str, int]:
+    """Returns field population counts to verify data integrity."""
+    total_reports = db.query(func.count(Report.report_id)).scalar() or 0
+    with_category = db.query(func.count(Report.report_id)).filter(Report.category.isnot(None), Report.category != '').scalar() or 0
+    with_site = db.query(func.count(Report.report_id)).filter(Report.site.isnot(None), Report.site != '').scalar() or 0
+    with_activity = db.query(func.count(Report.report_id)).filter(Report.activity.isnot(None), Report.activity != '').scalar() or 0
+    res = {
+        "total_reports": total_reports,
+        "with_category": with_category,
+        "with_site": with_site,
+        "with_activity": with_activity,
+    }
+    logger.info(f"[{datetime.now(timezone.utc).isoformat()}] EVENT=query_debug_counts RESULT={res}")
+    return res
 
 
 def refresh_analytics_cache(db: Session) -> dict[str, Any]:
@@ -357,8 +467,7 @@ def refresh_analytics_cache(db: Session) -> dict[str, Any]:
     sites = get_site_stats(db)
     activities = get_activity_stats(db)
 
-    logger.info(f"Analytics cache refreshed. Total reports in DB: {total}")
-    return {
+    result = {
         "status": "refreshed",
         "total_reports": total,
         "sif_count": sif["sif_count"],
@@ -368,3 +477,5 @@ def refresh_analytics_cache(db: Session) -> dict[str, Any]:
         "activities_count": len(activities),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+    logger.info(f"[{datetime.now(timezone.utc).isoformat()}] EVENT=analytics_cache_refreshed TOTAL_REPORTS={total}")
+    return result

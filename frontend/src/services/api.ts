@@ -39,6 +39,8 @@ export interface ApiReport {
   risk_score:    number;
   sif_potential: string;   // "YES" | "NO"
   risk_level:    string;   // "LOW" | "MEDIUM" | "HIGH" | "CRITICAL"
+  site?:         string;
+  activity?:     string;
   date?:         string | null;
   created_at?:   string | null;
 }
@@ -72,6 +74,8 @@ export interface UploadResult {
     risk_score:    number;
     risk_level:    string;
     sif_potential: string;
+    site?:         string;
+    activity?:     string;
     date?:         string;
   }>;
 }
@@ -95,7 +99,12 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(detail);
   }
 
-  return res.json() as Promise<T>;
+  const json = await res.json();
+  // If backend returns { data: ..., meta: ... }, extract data if present
+  if (json && typeof json === 'object' && 'data' in json && json.data !== undefined) {
+    return json.data as T;
+  }
+  return json as T;
 }
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
@@ -110,6 +119,20 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
 
 export const fetchDashboardSummary = fetchDashboardStats;
 
+export interface TrendsIntelligenceResponse {
+  data: TrendPoint[];
+  trend: string;
+  trend_reason: string;
+  anomalies: any[];
+  insights: AIInsight[];
+  meta?: {
+    total_reports?: number;
+    last_updated?: string;
+    source?: string;
+    is_empty?: boolean;
+  };
+}
+
 /**
  * GET /api/risk-intelligence/trends
  * Returns time-series monthly trend aggregated in SQLite.
@@ -119,11 +142,34 @@ export async function fetchRiskIntelligenceTrends(): Promise<TrendPoint[]> {
 }
 
 /**
- * POST /api/admin/reset-db
- * Hard resets the database and clears caches.
+ * GET /api/risk-intelligence/trends (Full envelope)
+ * Returns monthly trend data along with AI trend classifications, reasons, and anomalies.
  */
-export async function resetDatabase(): Promise<{ status: string }> {
-  return apiFetch<{ status: string }>('/admin/reset-db', {
+export async function fetchTrendsIntelligence(): Promise<TrendsIntelligenceResponse> {
+  const res = await fetch('/api/risk-intelligence/trends', { headers: { 'Content-Type': 'application/json' } });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+
+
+/**
+ * POST /api/admin/reset-db
+ * Hard resets the database and clears caches (requires confirmation flag).
+ */
+export async function resetDatabase(): Promise<{ status: string; total_deleted: number }> {
+  return apiFetch<{ status: string; total_deleted: number }>('/admin/reset-db?confirm=true', {
+    method: 'POST',
+    body:   JSON.stringify({ confirm: true }),
+  });
+}
+
+/**
+ * POST /api/refresh-analytics
+ * Force refresh analytics cache and recompute aggregations.
+ */
+export async function refreshAnalytics(): Promise<{ status: string; total_reports: number }> {
+  return apiFetch<{ status: string; total_reports: number }>('/refresh-analytics', {
     method: 'POST',
   });
 }
@@ -189,9 +235,6 @@ export async function createReport(description: string): Promise<ApiReport> {
  * POST /api/reports/upload
  * Upload a CSV or Excel file. Every row is analyzed and saved to the DB.
  * Returns processing statistics and a 5-row sample.
- *
- * Uses FormData (multipart) — do NOT set Content-Type header manually,
- * the browser sets it with the correct boundary.
  */
 export async function uploadReportsCSV(file: File): Promise<UploadResult> {
   const form = new FormData();
@@ -200,7 +243,6 @@ export async function uploadReportsCSV(file: File): Promise<UploadResult> {
   const res = await fetch('/api/reports/upload', {
     method: 'POST',
     body:   form,
-    // No Content-Type header — browser adds multipart boundary automatically
   });
 
   if (!res.ok) {
@@ -214,14 +256,18 @@ export async function uploadReportsCSV(file: File): Promise<UploadResult> {
     throw new Error(detail);
   }
 
-  return res.json() as Promise<UploadResult>;
+  const json = await res.json();
+  if (json && typeof json === 'object' && 'data' in json && json.data !== undefined) {
+    return json.data as UploadResult;
+  }
+  return json as UploadResult;
 }
 
 // ─── Corrective Actions ───────────────────────────────────────────────────────
 
 export interface ActionItem {
   id:          number;
-  report_id:   number | null;
+  report_id:   number | string | null;
   description: string;
   owner:       string;
   status:      'OPEN' | 'IN_PROGRESS' | 'COMPLETED' | string;
@@ -230,7 +276,7 @@ export interface ActionItem {
 }
 
 export interface CreateActionPayload {
-  report_id?:   number | null;
+  report_id?:   number | string | null;
   description: string;
   owner:       string;
   status?:     string;
@@ -238,7 +284,7 @@ export interface CreateActionPayload {
 }
 
 export interface UpdateActionPayload {
-  report_id?:   number | null;
+  report_id?:   number | string | null;
   description?: string;
   owner?:       string;
   status?:      string;
@@ -257,7 +303,7 @@ export async function fetchActions(): Promise<ActionItem[]> {
  * GET /api/actions/{report_id}
  * Fetch corrective actions for a specific safety report.
  */
-export async function fetchActionsByReport(reportId: number): Promise<ActionItem[]> {
+export async function fetchActionsByReport(reportId: string | number): Promise<ActionItem[]> {
   return apiFetch<ActionItem[]>(`/actions/${reportId}`);
 }
 
@@ -287,7 +333,7 @@ export async function updateAction(id: number, payload: UpdateActionPayload): Pr
 
 export interface ReviewItem {
   id:         number;
-  report_id:  number;
+  report_id:  string | number;
   decision:   'CONFIRMED' | 'CORRECTED' | 'REJECTED' | string;
   comment:    string | null;
   reviewer:   string;
@@ -295,7 +341,7 @@ export interface ReviewItem {
 }
 
 export interface CreateReviewPayload {
-  report_id: number;
+  report_id: string | number;
   decision:  string;
   comment?:  string | null;
   reviewer?: string;
@@ -305,7 +351,7 @@ export interface CreateReviewPayload {
  * GET /api/reviews/{report_id}
  * Fetch all audit review decisions for a safety report.
  */
-export async function fetchReviewsByReport(reportId: number): Promise<ReviewItem[]> {
+export async function fetchReviewsByReport(reportId: string | number): Promise<ReviewItem[]> {
   return apiFetch<ReviewItem[]>(`/reviews/${reportId}`);
 }
 
@@ -351,15 +397,34 @@ export async function fetchReportExplanation(reportId?: string | number, reportD
 
 // ─── Analytics, Patterns, Sites & Command Center ──────────────────────────────
 
+export interface AIInsight {
+  type:        'RECURRING_PATTERN' | 'ANOMALY' | 'CROSS_SITE_RISK' | 'TREND' | string;
+  title:       string;
+  message:     string;
+  severity:    'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | string;
+  sites?:      string[];
+  site?:       string;
+  metric?:     string;
+  cluster_id?: string;
+}
+
 export interface PatternItem {
-  category:     string;
-  count:        number;
-  name?:        string;
-  description?: string;
-  frequency?:   number;
-  risk_level?:  'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | string;
-  sites?:       string[];
-  trend?:       'increasing' | 'stable' | 'decreasing' | string;
+  cluster_id?:          string;
+  theme?:               string;
+  category:             string;
+  barrier?:             string;
+  count:                number;
+  name?:                string;
+  description?:         string;
+  frequency?:           number;
+  risk_level?:          'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | string;
+  risk_score?:          number;
+  avg_risk?:            number;
+  sif_count?:           number;
+  is_repeated?:         boolean;
+  sample_descriptions?: string[];
+  sites?:               string[];
+  trend?:               'increasing' | 'stable' | 'decreasing' | string;
 }
 
 export interface SiteRiskItem {
@@ -405,6 +470,10 @@ export async function fetchAnalyticsPatterns(): Promise<PatternItem[]> {
   return apiFetch<PatternItem[]>('/analytics/patterns');
 }
 
+export async function fetchAnalyticsInsights(): Promise<AIInsight[]> {
+  return apiFetch<AIInsight[]>('/analytics/insights');
+}
+
 export async function fetchAnalyticsSites(): Promise<SiteRiskItem[]> {
   return apiFetch<SiteRiskItem[]>('/analytics/sites');
 }
@@ -420,3 +489,4 @@ export async function fetchCommandCenterData(): Promise<CommandCenterData> {
 export async function fetchDebugCounts(): Promise<DebugCounts> {
   return apiFetch<DebugCounts>('/debug/count');
 }
+

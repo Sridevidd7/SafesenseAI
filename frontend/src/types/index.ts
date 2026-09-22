@@ -87,12 +87,27 @@ export interface ReportAnalysis {
   life_saving_rule: string;
   evidence_phrases: string[];
   explanation: string;
+  source?: string;
+  fallback_indicator?: string | null;
+  input_feedback?: string;
+  confidence_reason?: string;
+  confidence_reason_user?: string;
+  system_confidence?: 'HIGH' | 'MEDIUM' | 'LOW' | string;
+  system_confidence_score?: number;
+  analysis_quality?: 'HIGH' | 'MEDIUM' | 'LOW' | string;
+  adversarial_flags?: string[];
+  temporal_sequence?: string;
+  temporal_timeline?: string[];
+  raw_score?: number;
+  normalized_score?: number;
+  normalization_applied?: boolean;
   risk_factors: RiskFactor[];
   recommended_actions: string[];
   similar_report_ids: string[];
   pattern_name?: string;
-  mode: 'rule-based' | 'ml';
+  mode: 'rule-based' | 'ml' | string;
 }
+
 
 export interface RiskFactor {
   name: string;

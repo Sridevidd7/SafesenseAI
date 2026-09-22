@@ -133,9 +133,15 @@ export default function AnalysisPage() {
     }
   }
 
+  const [manualInputError, setManualInputError] = useState<string | null>(null);
+
   async function handleAnalyzeManualText(textToAnalyze?: string) {
     const text = (textToAnalyze ?? manualText).trim();
-    if (!text) return;
+    if (!text || text.length < 10) {
+      setManualInputError("Please provide a detailed safety observation (at least 10 characters).");
+      return;
+    }
+    setManualInputError(null);
 
     setSelectedReport(null);
     setAnalyzedSource('manual');
@@ -147,7 +153,12 @@ export default function AnalysisPage() {
       let result: ReportAnalysis;
       try {
         result = await analyzeReportApi({ report_text: text });
-      } catch {
+      } catch (err: any) {
+        const errorDetail = err?.message || "Analysis request failed";
+        if (errorDetail.includes("Please provide a detailed safety observation")) {
+          setManualInputError("Please provide a detailed safety observation.");
+          return;
+        }
         result = localAnalyzeReport({ report_text: text });
       }
       setAnalysis(result);
@@ -170,6 +181,7 @@ export default function AnalysisPage() {
       setShowSimulator(false);
     }
   }
+
 
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
@@ -440,11 +452,21 @@ export default function AnalysisPage() {
                 </label>
                 <textarea
                   value={manualText}
-                  onChange={e => setManualText(e.target.value)}
+                  onChange={e => {
+                    setManualText(e.target.value);
+                    if (manualInputError) setManualInputError(null);
+                  }}
                   placeholder="Paste or type a safety report observation here..."
-                  className="input-field min-h-[160px] text-sm resize-none"
+                  className={`input-field min-h-[160px] text-sm resize-none ${manualInputError ? 'border-red-400 focus:border-red-500' : ''}`}
                 />
+                {manualInputError && (
+                  <p className="mt-1.5 text-xs font-semibold text-red-600 flex items-center gap-1">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                    {manualInputError}
+                  </p>
+                )}
               </div>
+
 
               <div>
                 <p className="text-xs font-semibold text-slate-500 mb-2">Quick preset examples:</p>
@@ -572,12 +594,62 @@ export default function AnalysisPage() {
                 </div>
               </div>
 
+              {/* Fallback Visibility Banner */}
+              {analysis.source === 'fallback' && (
+                <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-900 flex items-start gap-2.5 shadow-xs">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-bold text-amber-900">Limited analysis due to unclear input</p>
+                    <p className="text-[11px] text-amber-700 mt-0.5">
+                      {analysis.explanation || 'Uncertain or ambiguous phrasing detected. Manual supervisor verification required.'}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Input Quality Feedback Banner */}
+              {analysis.input_feedback && (
+                <div className={`p-2.5 rounded-xl text-xs flex items-center gap-2 border shadow-xs ${
+                  analysis.analysis_quality === 'LOW'
+                    ? 'bg-orange-50 border-orange-200 text-orange-800'
+                    : analysis.analysis_quality === 'MEDIUM'
+                    ? 'bg-blue-50 border-blue-200 text-blue-800'
+                    : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                }`}>
+                  <Info className="w-3.5 h-3.5 shrink-0" />
+                  <span><strong>Input Quality:</strong> {analysis.input_feedback}</span>
+                </div>
+              )}
+
+              {/* AI Confidence Explanation Card */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-900 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+                    AI Confidence Assessment
+                  </span>
+                  <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md border ${
+                    analysis.system_confidence === 'HIGH'
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      : analysis.system_confidence === 'MEDIUM'
+                      ? 'bg-blue-50 text-blue-700 border-blue-200'
+                      : 'bg-amber-50 text-amber-700 border-amber-200'
+                  }`}>
+                    {analysis.system_confidence || 'HIGH'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-600 leading-relaxed">
+                  {analysis.confidence_reason_user || "High confidence because multiple strong safety violations and clear action words were detected."}
+                </p>
+              </div>
+
               {/* Grounded Explanation */}
               <div className="card p-4 space-y-2.5">
                 <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5 uppercase tracking-wider">
                   <Zap className="w-3.5 h-3.5 text-amber-500" />
                   Root Cause &amp; Risk Explanation
                 </h4>
+
 
                 {analysis.evidence_phrases && analysis.evidence_phrases.length > 0 && (
                   <div className="flex flex-wrap gap-1 mb-1">

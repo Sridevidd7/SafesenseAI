@@ -1,83 +1,25 @@
 """
-services/report_service.py — Business logic for safety report processing.
+services/report_service.py — Business logic for safety report ingestion and processing.
 
-All database operations and rule-engine calls live here.
-Route handlers are kept thin — they only call these functions.
+Standardized Single Ingestion Pipeline:
+- Single insert_report() function handles all entry points (CSV upload, manual entry, API).
+- Text normalization, date normalization, and site/activity normalization.
+- Ingestion-level MD5 content hashing (description + date + site).
+- Database-level deduplication via content_hash and report_id.
+- Automatic analytics cache refresh on write.
+- Structured logging.
 """
+from __future__ import annotations
+
+import hashlib
+import logging
 from datetime import datetime, timezone
+from typing import Any, Dict, Optional, Tuple, Union
+import pandas as pd
 from sqlalchemy.orm import Session
 
 from models import Report
 from schemas import ReportCreate
-
-
-# ─── Rule engine constants ────────────────────────────────────────────────────
-# Each entry: (category_name, keyword_list)
-# detectLSR: count keyword hits per category, highest wins.
-
-_LSR_KEYWORDS: list[tuple[str, list[str]]] = [
-    ("Confined Space", [
-        "confined space", "vessel entry", "tank entry", "permit",
-        "gas test", "atmospheric", "oxygen", "h2s", "drain",
-        "pit", "sump", "chamber", "enclosed",
-    ]),
-    ("Energy Isolation", [
-        "lockout", "tagout", "loto", "isolation", "energized",
-        "de-energize", "live circuit", "electrical", "voltage",
-        "power source", "isolation certificate", "pressure", "stored energy",
-    ]),
-    ("Hot Work", [
-        "welding", "cutting", "grinding", "hot work", "sparks",
-        "flame", "arc", "torch", "fire watch", "flammable",
-        "ignition", "permit to work",
-    ]),
-    ("Working at Height", [
-        "height", "scaffold", "ladder", "roof", "platform",
-        "harness", "fall arrest", "elevated", "guardrail",
-        "edge protection", "toe board", "fall protection",
-    ]),
-    ("Line of Fire", [
-        "line of fire", "suspended load", "crane", "lift",
-        "rigging", "exclusion zone", "struck by", "falling object",
-        "overhead", "below load",
-    ]),
-    ("Vehicle Movement", [
-        "vehicle", "forklift", "hgv", "truck", "reversing",
-        "pedestrian", "banksman", "traffic", "collision",
-        "seat belt", "speeding", "excavator", "mobile plant",
-    ]),
-    ("Chemical Handling", [
-        "chemical", "acid", "caustic", "toxic", "corrosive",
-        "spill", "ppe", "sds", "msds", "inhalation",
-        "exposure", "gas leak", "chlorine", "sulfuric", "ammonia",
-    ]),
-    ("Fire Prevention", [
-        "fire", "smoke", "detector", "suppression", "extinguisher",
-        "flammable", "combustible", "ignition", "evacuation", "alarm",
-    ]),
-]
-
-_BARRIER_PHRASES: list[tuple[str, list[str]]] = [
-    ("Gas Testing Not Completed",   ["without gas test", "no gas test", "without atmospheric", "not tested"]),
-    ("Permit Not Obtained",         ["without permit", "no permit", "permit not obtained", "no authorization"]),
-    ("Isolation Not Applied",       ["without isolat", "no isolation", "not isolated", "without lockout"]),
-    ("Fall Protection Not Used",    ["without harness", "no harness", "no fall arrest", "no edge protection"]),
-    ("Exclusion Zone Not Set",      ["exclusion zone", "no exclusion", "zone not established", "below load"]),
-    ("Fire Watch Not Posted",       ["no fire watch", "fire watch not", "without fire watch"]),
-    ("PPE Not Available",           ["without ppe", "no ppe", "ppe not available", "without protection"]),
-    ("Exposed Live Parts",          ["live terminal", "live conductor", "exposed conductor", "live wire"]),
-    ("Seat Belt Not Worn",          ["without seat belt", "no seat belt", "not wearing seat belt"]),
-]
-
-_SIF_KEYWORDS = [
-    "confined space", "without gas testing", "lockout", "without isolation",
-    "energized", "live circuit", "without harness", "suspended load",
-    "line of fire", "exclusion zone", "chemical exposure", "toxic gas",
-    "oxygen deficient", "pressurized", "fire suppression disabled",
-    "hot work", "without permit",
-]
-
-
 from services.risk_engine import (
     detect_lsr as engine_detect_lsr,
     detect_barrier as engine_detect_barrier,
@@ -85,21 +27,58 @@ from services.risk_engine import (
     calculate_risk_score as engine_calculate_risk_score,
     analyze_report as engine_analyze_report,
 )
+from services.analytics_service import refresh_analytics_cache
 
-# ─── Functions delegating to unified risk engine ──────────────────────────────
+logger = logging.getLogger("safesense.ingestion")
+logging.basicConfig(level=logging.INFO)
+
+
+# ─── Normalization and Hashing Helpers ────────────────────────────────────────
+
+def normalize_text(text: str) -> str:
+    """Normalize text by stripping and collapsing whitespace."""
+    if not text:
+        return ""
+    return " ".join(str(text).strip().split())
+
+
+def normalize_date(date_val: Any) -> str:
+    """Normalize date to YYYY-MM-DD or default to today."""
+    if not date_val or not str(date_val).strip():
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    s = str(date_val).strip()
+    try:
+        dt = pd.to_datetime(s, errors="coerce")
+        if pd.notnull(dt):
+            return dt.strftime("%Y-%m-%d")
+    except Exception:
+        pass
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def compute_content_hash(description: str, date: str = "", site: str = "") -> str:
+    """
+    Generate deterministic MD5 content fingerprint from (description + date + site).
+    Prevents duplicate dataset uploads and duplicate observations even if report_id differs.
+    """
+    norm_desc = normalize_text(description).lower()
+    norm_date = normalize_text(date).lower()
+    norm_site = normalize_text(site or "site alpha").lower()
+    raw = f"{norm_desc}|{norm_date}|{norm_site}"
+    return hashlib.md5(raw.encode("utf-8")).hexdigest()
+
+
+# ─── Risk Engine Wrappers ─────────────────────────────────────────────────────
 
 def detect_lsr(text: str) -> str:
-    """Return the Life-Saving Rule category with the most keyword hits."""
     return engine_detect_lsr(text)
 
 
 def detect_barrier(text: str) -> str:
-    """Return the primary barrier failure pattern that matches."""
     return engine_detect_barrier(text)
 
 
 def detect_barriers(text: str) -> list[str]:
-    """Return all barrier failure patterns that match."""
     return engine_detect_barriers(text)
 
 
@@ -110,9 +89,6 @@ def calculate_risk_score(
     severity:    str = "",
     report_type: str = "",
 ) -> int:
-    """
-    Five-factor context-aware risk score, capped at 100.
-    """
     result = engine_calculate_risk_score({
         "report_text": text,
         "life_saving_rule": lsr or None,
@@ -123,16 +99,14 @@ def calculate_risk_score(
     return result["risk_score"]
 
 
-def is_sif(text: str, score: int) -> bool:
-    """Return True when the report shows SIF potential."""
+def is_sif(text: str, score: int = 0) -> bool:
     analysis = engine_analyze_report({"report_text": text})
     return analysis["sif_potential"] == "YES"
 
 
-def analyze_text(description: str) -> dict:
+def analyze_text(description: str) -> dict[str, Any]:
     """
     Run the full context-aware rule engine on raw description text.
-    Returns a dict with category, barrier_failures, risk_score, confidence, sif_potential, risk_level, negation_type, explanation.
     """
     analysis = engine_analyze_report({"report_text": description})
     return {
@@ -149,47 +123,107 @@ def analyze_text(description: str) -> dict:
     }
 
 
-import hashlib
+# ─── Standard Ingestion Pipeline ──────────────────────────────────────────────
 
-def compute_report_hash(description: str, date: str = "", location: str = "") -> str:
-    """Deterministic MD5 fingerprint from normalized text fields."""
-    norm_desc = " ".join((description or "").strip().lower().split())
-    norm_date = (date or "").strip().lower()
-    norm_loc  = (location or "").strip().lower()
-    raw = f"{norm_desc}|{norm_date}|{norm_loc}"
-    return hashlib.md5(raw.encode("utf-8")).hexdigest()
+def insert_report(
+    db: Session,
+    data: Union[dict[str, Any], ReportCreate],
+    auto_commit: bool = True,
+    refresh_cache: bool = True,
+) -> Tuple[Report, bool]:
+    """
+    Standardized single ingestion function for all entry points (CSV, manual entry, API).
 
+    Responsibilities:
+    1. Normalizes fields (description, date, site, activity).
+    2. Computes content_hash for database-level deduplication.
+    3. Checks for existing record by content_hash or report_id.
+    4. Runs rule engine analysis for new records.
+    5. Inserts new Report ORM object.
+    6. Automatically triggers analytics refresh on insert.
 
-# ─── Database operations ──────────────────────────────────────────────────────
+    Returns:
+        tuple (Report, inserted_boolean)
+    """
+    raw_dict: dict[str, Any] = data.dict() if hasattr(data, "dict") else dict(data)
+    
+    description = normalize_text(raw_dict.get("description") or raw_dict.get("report_text") or "")
+    if len(description) < 5:
+        raise ValueError("Report description must be at least 5 characters.")
+
+    raw_date = raw_dict.get("date") or raw_dict.get("incident_date") or ""
+    date_val = normalize_date(raw_date)
+
+    raw_site = raw_dict.get("site") or raw_dict.get("location") or ""
+    site_val = normalize_text(raw_site) if raw_site else "Site Alpha"
+
+    raw_activity = raw_dict.get("activity") or raw_dict.get("task") or ""
+    activity_val = normalize_text(raw_activity) if raw_activity else "General Operation"
+
+    # Compute deterministic content hash for ingestion deduplication
+    c_hash = compute_content_hash(description, date_val, site_val)
+
+    # Determine report_id (user supplied or hash)
+    supplied_id = str(raw_dict.get("report_id") or raw_dict.get("id") or "").strip()
+    r_id = supplied_id if supplied_id else c_hash
+
+    # Check for existing duplicate by content_hash or report_id
+    existing = db.query(Report).filter(
+        (Report.content_hash == c_hash) | (Report.report_id == r_id)
+    ).first()
+
+    if existing:
+        logger.info(
+            f"[{datetime.now(timezone.utc).isoformat()}] EVENT=ingestion_duplicate_skipped "
+            f"REPORT_ID={existing.report_id} HASH={c_hash[:8]}... SITE={existing.site}"
+        )
+        return existing, False
+
+    # Run analysis
+    analysis = analyze_text(description)
+    user_cat = raw_dict.get("category") or raw_dict.get("report_type")
+    effective_category = str(user_cat).strip() if user_cat else analysis["category"]
+
+    user_sev = str(raw_dict.get("severity") or raw_dict.get("risk_level") or "").strip().upper()
+    effective_level = user_sev if user_sev in ("CRITICAL", "HIGH", "MEDIUM", "LOW") else analysis["risk_level"]
+
+    now = datetime.now(timezone.utc)
+    new_report = Report(
+        report_id     = r_id,
+        content_hash  = c_hash,
+        description   = description,
+        category      = effective_category,
+        risk_score    = analysis["risk_score"],
+        sif_potential = analysis["sif_potential"],
+        risk_level    = effective_level,
+        site          = site_val,
+        activity      = activity_val,
+        date          = date_val,
+        created_at    = now,
+    )
+
+    db.add(new_report)
+
+    if auto_commit:
+        db.commit()
+        db.refresh(new_report)
+        if refresh_cache:
+            refresh_analytics_cache(db)
+
+    logger.info(
+        f"[{datetime.now(timezone.utc).isoformat()}] EVENT=ingestion_report_created "
+        f"REPORT_ID={new_report.report_id} HASH={c_hash[:8]}... LEVEL={effective_level} SIF={analysis['sif_potential']}"
+    )
+    return new_report, True
+
 
 def create_report(db: Session, payload: ReportCreate) -> Report:
     """
-    Analyze the description, persist the report (or return existing if duplicate), and return the ORM object.
+    API entry point for POST /api/reports.
+    Standardized to call insert_report().
     """
-    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    analysis = analyze_text(payload.description)
-    norm_desc = " ".join(payload.description.strip().lower().split())
-    raw = f"{norm_desc}|{date_str}|{analysis['category'].lower()}"
-    r_id = hashlib.md5(raw.encode("utf-8")).hexdigest()
-
-    existing = db.query(Report).filter(Report.report_id == r_id).first()
-    if existing:
-        return existing
-
-    db_report = Report(
-        report_id     = r_id,
-        description   = payload.description,
-        category      = analysis["category"],
-        risk_score    = analysis["risk_score"],
-        sif_potential = analysis["sif_potential"],
-        risk_level    = analysis["risk_level"],
-        date          = date_str,
-        created_at    = datetime.now(timezone.utc),
-    )
-    db.add(db_report)
-    db.commit()
-    db.refresh(db_report)
-    return db_report
+    report, _ = insert_report(db, payload, auto_commit=True, refresh_cache=True)
+    return report
 
 
 def get_all_reports(
@@ -213,7 +247,9 @@ def get_all_reports(
     if limit is not None:
         query = query.limit(limit)
 
-    return query.all(), total
+    results = query.all()
+    logger.info(f"[{datetime.now(timezone.utc).isoformat()}] EVENT=query_list_reports TOTAL={total} RETURNED={len(results)}")
+    return results, total
 
 
 def get_report_by_id(db: Session, report_id: str | int) -> Report | None:

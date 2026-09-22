@@ -1,13 +1,19 @@
 """
 SafeSense AI — Backend Risk Engine
-Rule-based NLP analysis with:
-- Multi-barrier failure detection and incremental penalty scoring
-- Confidence scoring based on keyword density, structural clarity, and ambiguity
-- Context-aware negation handling (unsafe violations vs. safe preventive stop-work decisions)
-- Scaffolding for ML model integration
+===================================
+Production-Ready NLP Safety Analysis Engine with:
+1. Temporal & Contradiction Awareness (Sentence segmentation & state sequence analysis)
+2. Noise Reduction & Prioritization for Long Reports
+3. Context-Aware Negation & Preventive Stop Detection
+4. Adversarial Input Guard & Text Clarity Scoring
+5. Calibrated System Confidence & Risk Normalization
+6. Strict Validation & Deterministic Safe Fallback
 """
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple, Set
 import re
+import logging
+
+logger = logging.getLogger("safesense.risk_engine")
 
 # ─── Life-Saving Rules ────────────────────────────────────────────────────────
 LSR_RULES = {
@@ -21,18 +27,35 @@ LSR_RULES = {
     "Fire Prevention": ["fire", "smoke", "detector", "suppression", "extinguisher", "flammable", "combustible", "sprinkler"],
 }
 
-BARRIER_PATTERNS = {
-    "Gas Testing Not Completed": ["without gas test", "no gas test", "without atmospheric", "not tested", "gas testing was not done", "gas test was not done", "gas test not done", "gas testing not completed", "gas testing was not completed", "no atmospheric testing"],
-    "Permit Not Obtained": ["without permit", "no permit", "permit not obtained", "without authorization", "missing permit", "permit was not issued", "no authorization", "permit not issued", "permit was not obtained", "no valid permit"],
-    "Standby Person Not Assigned": ["no standby", "no attendant", "standby not", "without standby", "standby was missing", "no standby person", "attendant not assigned", "standby person not"],
-    "Isolation Not Applied": ["without isolat", "no isolation", "not isolated", "isolation not applied", "without lockout", "without loto", "isolation certificate was not", "missing isolation", "isolation was not applied"],
-    "Lockout/Tagout Not Completed": ["lockout not applied", "tag not applied", "loto not completed", "lockout not done", "tagout not completed", "no lockout"],
-    "Fall Protection Not Used": ["without harness", "no harness", "no fall arrest", "no edge protection", "harness was not available", "harness was missing", "not wearing harness", "without fall protection", "no guardrail"],
-    "Exclusion Zone Not Established": ["exclusion zone", "no exclusion", "zone not established", "standing under", "below load", "no exclusion zone"],
-    "Fire Watch Not Posted": ["no fire watch", "without fire watch", "fire watch not posted", "missing fire watch", "fire watch was not available"],
-    "PPE Not Available": ["without ppe", "no ppe", "without protection", "without gloves", "not wearing ppe", "ppe was missing", "ppe was not available", "not wearing safety glasses", "not wearing helmet", "not wearing mask"],
-    "Pressure Not Released": ["not depressurized", "pressure not released", "still under pressure", "line under pressure"],
-}
+from services.barrier_dictionary import (
+    BARRIER_SYNONYMS,
+    BARRIER_KEYWORDS,
+    POSITIVE_COMPLETION_PATTERNS,
+    normalize_text,
+    detect_barriers_with_evidence,
+    detect_barriers,
+    detect_barrier,
+)
+
+# Backward-compatibility alias
+BARRIER_PATTERNS = BARRIER_SYNONYMS
+
+from services.rule_classifier import (
+    RULE_DEFINITIONS,
+    classify_life_saving_rule,
+    detect_lsr,
+)
+
+from utils.analysis_utils import (
+    detect_adversarial_patterns,
+    calculate_system_confidence,
+    normalize_risk_score,
+    validate_analysis_output,
+    safe_fallback_analysis,
+    generate_input_feedback,
+)
+
+
 
 # ─── Negation & Context Patterns ──────────────────────────────────────────────
 
@@ -61,10 +84,11 @@ NEGATED_STOP_REGEX = re.compile(
 NEGATED_BARRIER_REGEX = re.compile(
     r"\b("
     r"(?:without|with\s+no|no|missing|lack\s+of|absence\s+of|failed\s+to\s+(?:conduct|perform|obtain|wear|apply|use))\s+"
-    r"(?:gas\s+test(?:ing)?|atmospheric\s+test(?:ing)?|permit(?: to work)?|ptw|authorization|isolation|lockout|tagout|loto|harness|fall\s+protection|fall\s+arrest|ppe|safety\s+glasses|gloves|helmet|mask|respirator|fire\s+watch|standby(?:\s+person)?|attendant|ventilation|guardrail|earthing|grounding|chock|banksman)|"
-    r"(?:gas\s+test(?:ing)?|permit|ptw|authorization|isolation|lockout|tagout|loto|harness|fall\s+protection|ppe|fire\s+watch|standby|attendant|ventilation|guardrail)\s+(?:was\s+|were\s+)?(?:not\s+(?:done|obtained|conducted|applied|completed|issued|available|present|worn|used|carried\s+out|tested|performed))|"
+    r"(?:gas\s+test(?:ing)?|atmospheric\s+test(?:ing)?|testing|permit(?: to work)?|ptw|authorization|clearance|isolation|lockout|tagout|loto|harness|fall\s+protection|fall\s+arrest|ppe|safety\s+glasses|gloves|helmet|mask|respirator|fire\s+watch|standby(?:\s+person)?|attendant|ventilation|guardrail|earthing|grounding|chock|banksman)|"
+    r"(?:gas\s+test(?:ing)?|testing|permit|ptw|authorization|isolation|lockout|tagout|loto|harness|fall\s+protection|ppe|fire\s+watch|standby|attendant|ventilation|guardrail)\s+(?:was\s+|were\s+)?(?:not\s+(?:done|obtained|conducted|applied|completed|issued|available|present|worn|used|carried\s+out|tested|performed))|"
     r"not\s+wearing\s+(?:ppe|harness|helmet|gloves|safety\s+glasses|mask|respirator|protection|seat\s*belt)|"
-    r"not\s+(?:tested|isolated|depressurized|grounded|authorized|inspected)"
+    r"not\s+(?:tested|isolated|depressurized|grounded|authorized|inspected)|"
+    r"entry\s+without\s+testing"
     r")\b",
     re.IGNORECASE
 )
@@ -74,6 +98,8 @@ AMBIGUOUS_INDICATORS = re.compile(
     r"unclear\s+(?:if|whether)|"
     r"not\s+confirmed\s+(?:if|whether)|"
     r"possibly|"
+    r"maybe|"
+    r"not\s+sure|"
     r"may\s+have|"
     r"while\s+inspecting|"
     r"inspection\s+only|"
@@ -84,32 +110,18 @@ AMBIGUOUS_INDICATORS = re.compile(
 )
 
 
-def detect_lsr(text: str) -> str:
-    """Return the Life-Saving Rule category with the highest keyword match count."""
-    lower = text.lower()
-    best, best_score = "General Safety", 0
-    for rule, keywords in LSR_RULES.items():
-        score = sum(1 for k in keywords if re.search(r"\b" + re.escape(k) + r"\b", lower))
-        if score > best_score:
-            best_score = score
-            best = rule
-    return best
+# ─── TEMPORAL TRANSITION KEYWORDS ─────────────────────────────────────────────
 
+TEMPORAL_CONNECTIVES = [
+    "but later", "and then", "subsequently", "followed by", "after that",
+    "however", "prior to", "initially", "later", "then", "afterwards",
+    "before", "after", "meanwhile", "eventually"
+]
 
-def detect_barriers(text: str) -> List[str]:
-    """Detect ALL matching barrier failures in the report text."""
-    lower = text.lower()
-    matched = []
-    for barrier, patterns in BARRIER_PATTERNS.items():
-        if any(p in lower for p in patterns):
-            matched.append(barrier)
-    return matched
-
-
-def detect_barrier(text: str) -> str:
-    """Return first detected barrier or fallback (backward compatibility)."""
-    barriers = detect_barriers(text)
-    return barriers[0] if barriers else "Unknown Barrier Failure"
+TEMPORAL_SPLIT_PATTERN = re.compile(
+    r"\b(but\s+later|and\s+then|subsequently|followed\s+by|after\s+that|however|later|then|afterwards)\b",
+    re.IGNORECASE
+)
 
 
 def extract_evidence(text: str) -> List[str]:
@@ -118,7 +130,7 @@ def extract_evidence(text: str) -> List[str]:
         "confined space", "without gas testing", "without permit", "no permit",
         "without isolation", "lockout", "live circuit", "without harness",
         "welding", "without fire watch", "exclusion zone", "without standby",
-        "no standby", "not wearing ppe",
+        "no standby", "not wearing ppe", "entry without testing", "without testing"
     ]
     evidence = [p for p in key_phrases if p in lower]
     pattern_matches = re.findall(r"(?:without|no|not|missing)\s+\w+(?:\s+\w+)?", lower)
@@ -203,6 +215,187 @@ def analyze_negation_context(text: str) -> Dict[str, Any]:
     }
 
 
+# ─── 1. TEMPORAL & SENTENCE PARSING (CRITICAL) ────────────────────────────────
+
+def split_into_temporal_clauses(text: str) -> List[Dict[str, Any]]:
+    """
+    Sentence & Clause Segmentation:
+    Splits long or multi-phase text into sequential sentence and temporal clauses.
+    Identifies chronological order and safety states per clause.
+    """
+    if not text or not text.strip():
+        return []
+
+    # Step 1: Split on standard sentence punctuation (. ; ! ? \n \r)
+    raw_segments = [seg.strip() for seg in re.split(r"[\.\;\!\?\n\r]+", text) if seg.strip()]
+    refined_clauses: List[str] = []
+
+    for seg in raw_segments:
+        # Step 2: Split inline temporal transitions (e.g. "gas test done but later entry without testing")
+        parts = TEMPORAL_SPLIT_PATTERN.split(seg)
+        if len(parts) > 1:
+            curr = ""
+            for p in parts:
+                p_clean = p.strip()
+                if not p_clean:
+                    continue
+                if p_clean.lower() in TEMPORAL_CONNECTIVES:
+                    if curr.strip():
+                        refined_clauses.append(curr.strip())
+                    curr = p_clean + " "
+                else:
+                    curr += p_clean
+            if curr.strip():
+                refined_clauses.append(curr.strip())
+        else:
+            refined_clauses.append(seg)
+
+    # Step 3: Analyze each clause sequentially
+    parsed_clauses: List[Dict[str, Any]] = []
+    for idx, clause in enumerate(refined_clauses):
+        cl_lower = clause.lower()
+        marker = next((m for m in TEMPORAL_CONNECTIVES if m in cl_lower), None)
+        neg_info = analyze_negation_context(clause)
+
+        # Detect barriers within this specific clause
+        barriers_with_ev = detect_barriers_with_evidence(clause)
+        barrier_names = [b["barrier"] for b in barriers_with_ev]
+
+        # Check positive confirmation within this clause
+        has_positive_completion = False
+        for pos_patterns in POSITIVE_COMPLETION_PATTERNS.values():
+            if any(p.search(cl_lower) for p in pos_patterns):
+                has_positive_completion = True
+                break
+
+        is_safe = (
+            neg_info["negation_type"] == "SAFE_PREVENTIVE" or
+            (has_positive_completion and not barrier_names)
+        )
+        is_unsafe = (
+            neg_info["negation_type"] == "UNSAFE_VIOLATION" or
+            (len(barrier_names) > 0 and neg_info["negation_type"] != "SAFE_PREVENTIVE")
+        )
+
+        parsed_clauses.append({
+            "index": idx,
+            "clause_text": clause,
+            "temporal_marker": marker,
+            "negation_type": neg_info["negation_type"],
+            "negation_details": neg_info,
+            "barriers": barrier_names,
+            "barrier_evidence": barriers_with_ev,
+            "is_safe": is_safe,
+            "is_unsafe": is_unsafe,
+        })
+
+    return parsed_clauses
+
+
+def analyze_temporal_sequence(clauses: List[Dict[str, Any]], raw_text: str) -> Dict[str, Any]:
+    """
+    Advanced Multi-Stage Temporal & Contradiction Resolver:
+    - Maintains a chronological timeline array: e.g. ["SAFE", "UNSAFE", "SAFE", "UNSAFE"]
+    - Applies Final Rule: LAST unsafe state dominates UNLESS final state is SAFE with explicit confirmation.
+    """
+    clause_texts = [c["clause_text"] for c in clauses]
+    logger.info(f"[TEMPORAL_SPLIT] input='{raw_text[:60]}...' clause_count={len(clauses)} clauses={clause_texts}")
+
+    if not clauses:
+        return {
+            "temporal_sequence": "EMPTY",
+            "temporal_timeline": [],
+            "effective_negation_type": "NONE",
+            "effective_barriers": [],
+            "effective_barrier_evidence": [],
+            "final_state": "NONE",
+            "active_clauses": [],
+        }
+
+    # Step 1: Assign state per clause and build timeline
+    timeline: List[str] = []
+    all_unsafe_barriers: List[str] = []
+    all_unsafe_evidence: List[Dict[str, Any]] = []
+
+    for c in clauses:
+        if c["is_unsafe"]:
+            c["state"] = "UNSAFE"
+            timeline.append("UNSAFE")
+            for b in c["barriers"]:
+                if b not in all_unsafe_barriers:
+                    all_unsafe_barriers.append(b)
+            for ev in c["barrier_evidence"]:
+                if ev["barrier"] not in [x["barrier"] for x in all_unsafe_evidence]:
+                    all_unsafe_evidence.append(ev)
+        elif c["is_safe"]:
+            c["state"] = "SAFE"
+            timeline.append("SAFE")
+        else:
+            c["state"] = "NEUTRAL"
+
+    # Filtered active timeline (ignoring neutral statements)
+    active_timeline = [s for s in timeline if s in ("SAFE", "UNSAFE")]
+    if not active_timeline:
+        active_timeline = ["NEUTRAL"]
+
+    # Step 2: Multi-Stage Evaluation
+    # Final rule: LAST unsafe state dominates UNLESS final state is SAFE with explicit confirmation
+    last_unsafe_idx = max((i for i, c in enumerate(clauses) if c.get("state") == "UNSAFE"), default=-1)
+    last_safe_idx = max((i for i, c in enumerate(clauses) if c.get("state") == "SAFE"), default=-1)
+
+    has_unsafe = last_unsafe_idx != -1
+    has_safe = last_safe_idx != -1
+
+    if has_unsafe and has_safe:
+        if last_unsafe_idx > last_safe_idx:
+            # e.g. SAFE -> UNSAFE or SAFE -> UNSAFE -> SAFE -> UNSAFE
+            temporal_seq = "SAFE_TO_UNSAFE" if len(active_timeline) == 2 else "MULTI_STAGE_UNSAFE"
+            final_state = "UNSAFE_VIOLATION"
+            effective_neg = "UNSAFE_VIOLATION"
+            effective_barriers = all_unsafe_barriers
+            effective_evidence = all_unsafe_evidence
+        else:
+            # Final state is SAFE with explicit confirmation (e.g. UNSAFE -> SAFE)
+            temporal_seq = "UNSAFE_TO_SAFE" if len(active_timeline) == 2 else "MULTI_STAGE_SAFE_RESOLVED"
+            final_state = "SAFE_PREVENTIVE"
+            effective_neg = "SAFE_PREVENTIVE"
+            effective_barriers = all_unsafe_barriers
+            effective_evidence = all_unsafe_evidence
+    elif has_unsafe:
+        temporal_seq = "PURE_UNSAFE"
+        final_state = "UNSAFE_VIOLATION"
+        effective_neg = "UNSAFE_VIOLATION"
+        effective_barriers = all_unsafe_barriers
+        effective_evidence = all_unsafe_evidence
+    elif has_safe:
+        temporal_seq = "PURE_SAFE"
+        final_state = "SAFE_PREVENTIVE"
+        effective_neg = "SAFE_PREVENTIVE"
+        effective_barriers = []
+        effective_evidence = []
+    else:
+        temporal_seq = "NEUTRAL"
+        final_state = "NONE"
+        effective_neg = "NONE"
+        effective_barriers = []
+        effective_evidence = []
+
+    logger.info(f"[TEMPORAL_TIMELINE] timeline={active_timeline} sequence={temporal_seq} final_state={final_state}")
+    logger.info(f"[TEMPORAL_CLASSIFICATION] sequence={temporal_seq} final_state={final_state} effective_barriers={effective_barriers}")
+
+    return {
+        "temporal_sequence": temporal_seq,
+        "temporal_timeline": active_timeline,
+        "effective_negation_type": effective_neg,
+        "effective_barriers": effective_barriers,
+        "effective_barrier_evidence": effective_evidence,
+        "final_state": final_state,
+        "active_clauses": clauses,
+    }
+
+
+# ─── 2. NOISE REDUCTION & RISK CALCULATION ────────────────────────────────────
+
 def calculate_confidence(
     text: str,
     lsr: str,
@@ -211,10 +404,7 @@ def calculate_confidence(
     evidence: List[str],
 ) -> Dict[str, Any]:
     """
-    Computes a confidence score between 0.0 and 1.0 based on:
-    - Keyword density & specificity
-    - Structural clarity (subject + action verbs)
-    - Presence or absence of conflicting/ambiguous signals
+    Computes text-level confidence score between 0.20 and 0.98.
     """
     lower = text.lower().strip()
     words = lower.split()
@@ -239,7 +429,7 @@ def calculate_confidence(
         reasons.append("General safety context without specific Life-Saving Rule match")
 
     # 2. Barrier Match Density
-    n_barriers = len(barrier_failures)
+    n_barriers = len([b for b in barrier_failures if b != "Unknown Barrier Failure"])
     if n_barriers >= 2:
         score += 0.15
         reasons.append(f"{n_barriers} explicit barrier failures detected")
@@ -292,15 +482,17 @@ def calculate_risk_score(report: Dict) -> Dict:
     lower = text.lower()
     lsr = report.get("life_saving_rule") or detect_lsr(text)
     
-    # Detect all barrier failures
+    # Use provided barrier failures or fallback to detector
     barrier_failures = report.get("barrier_failures") or detect_barriers(text)
+    # Deduplicate barrier failures to eliminate over-counting in long reports
+    barrier_failures = list(dict.fromkeys(b for b in barrier_failures if b and b != "Unknown Barrier Failure"))
     primary_barrier = barrier_failures[0] if barrier_failures else "Unknown Barrier Failure"
 
     severity = (report.get("severity") or "").lower()
     report_type = (report.get("report_type") or "").lower()
 
-    negation_info = analyze_negation_context(text)
-    neg_type = negation_info["negation_type"]
+    neg_type = report.get("negation_type") or analyze_negation_context(text)["negation_type"]
+    neg_details = report.get("negation_details") or analyze_negation_context(text)
 
     n_barriers = len(barrier_failures)
 
@@ -345,11 +537,12 @@ def calculate_risk_score(report: Dict) -> Dict:
 
     return {
         "risk_score": total,
+        "raw_score": total,
         "risk_level": level,
         "barrier_failures": barrier_failures,
         "primary_barrier": primary_barrier,
         "negation_type": neg_type,
-        "negation_details": negation_info,
+        "negation_details": neg_details,
         "factors": [
             {"name": "Hazard Severity", "score": hazard_severity, "max_score": 30},
             {"name": "Barrier Failure", "score": barrier_score, "max_score": 35 if n_barriers > 1 else 25},
@@ -360,103 +553,209 @@ def calculate_risk_score(report: Dict) -> Dict:
     }
 
 
+# ─── 3. MAIN REPORT ANALYSIS PIPELINE ─────────────────────────────────────────
+
 def analyze_report(report: Dict) -> Dict:
+    """
+    Main analysis pipeline:
+    1. Adversarial Guard & Quality Check
+    2. Temporal & Clause Segmentation (Multi-stage timeline)
+    3. Rule Classification & Barrier Detection
+    4. Multi-Phase Sequence Resolution (Last unsafe state dominates unless final safe)
+    5. Calibrated System Confidence Calculation & Reason Formulation
+    6. Safe Dataset-Aware Risk Normalization (std_dev < 5 guard)
+    7. Strict Validation & Explicit Fallback Contract
+    """
     text = report.get("report_text", "")
-    lsr = report.get("life_saving_rule") or detect_lsr(text)
-    barrier_failures = report.get("barrier_failures") or detect_barriers(text)
-    evidence = extract_evidence(text)
+    if not text and report.get("description"):
+        text = report.get("description")
 
-    risk_data = calculate_risk_score({
-        **report,
-        "life_saving_rule": lsr,
-        "barrier_failures": barrier_failures,
-    })
+    try:
+        # Step 1: Adversarial & Input Quality Guard
+        adversarial_info = detect_adversarial_patterns(text)
+        adv_flags = adversarial_info["adversarial_flags"]
+        analysis_quality = adversarial_info["analysis_quality"]
+        text_clarity = adversarial_info["text_clarity"]
+        adv_penalty = adversarial_info["confidence_penalty"]
 
-    score = risk_data["risk_score"]
-    level = risk_data["risk_level"]
-    neg_type = risk_data["negation_type"]
-    neg_details = risk_data["negation_details"]
+        # Step 2: Temporal & Sentence Clause Segmentation
+        clauses = split_into_temporal_clauses(text)
+        temporal_analysis = analyze_temporal_sequence(clauses, text)
+        temporal_sequence = temporal_analysis["temporal_sequence"]
+        temporal_timeline = temporal_analysis["temporal_timeline"]
+        neg_type = temporal_analysis["effective_negation_type"]
 
-    # Confidence calculation
-    conf_data = calculate_confidence(text, lsr, barrier_failures, neg_type, evidence)
-    confidence = conf_data["confidence"]
-    confidence_level = conf_data["confidence_level"]
-    conf_reasons = conf_data["reasons"]
+        # Step 3: Life-Saving Rule Classification
+        rule_classification = classify_life_saving_rule(text)
+        lsr = report.get("life_saving_rule") or rule_classification["primary_rule"]
+        primary_rule = lsr
+        secondary_rule = rule_classification.get("secondary_rule")
+        rule_scores = rule_classification.get("scores", {})
+        rule_confidence = float(rule_scores.get(primary_rule, 0.70))
 
-    # SIF potential determination
-    if neg_type == "SAFE_PREVENTIVE":
-        sif_potential = "NO"
-        prevented_barriers = [f"Prevented: {b}" for b in barrier_failures] if barrier_failures else ["Safely Controlled"]
-        explanation = (
-            f"SAFE PREVENTIVE DECISION: Worker/team took proactive action ('{neg_details.get('preventive_phrase')}') "
-            f"when '{neg_details.get('barrier_phrase')}' was detected. "
-            f"Risk score reduced to {score}/100 ({level}) and SIF potential is NO because exposure was averted. "
-            f"Barriers addressed: {', '.join(barrier_failures) if barrier_failures else 'Standard Controls'}. "
-            f"Confidence: {confidence} ({confidence_level}) — {'; '.join(conf_reasons)}."
+        # Step 4: Barrier Evidence & Resolution
+        resolved_barriers = temporal_analysis["effective_barriers"]
+        resolved_evidence = temporal_analysis["effective_barrier_evidence"]
+
+        if not resolved_barriers:
+            if neg_type != "SAFE_PREVENTIVE":
+                raw_ev = detect_barriers_with_evidence(text)
+                resolved_barriers = [b["barrier"] for b in raw_ev]
+                resolved_evidence = raw_ev
+
+        # Deduplicate barrier failures across long inputs
+        barrier_failures = list(dict.fromkeys(resolved_barriers))
+        barrier_evidence = resolved_evidence
+        evidence = extract_evidence(text)
+
+        # Step 5: Risk Score Calculation
+        neg_details = analyze_negation_context(text)
+        risk_data = calculate_risk_score({
+            **report,
+            "report_text": text,
+            "life_saving_rule": lsr,
+            "barrier_failures": barrier_failures,
+            "negation_type": neg_type,
+            "negation_details": neg_details,
+        })
+
+        score = risk_data["risk_score"]
+        raw_score = score
+        level = risk_data["risk_level"]
+
+        # Step 6: Confidence Calculations & Stabilization
+        # 6a. Text-level confidence
+        conf_data = calculate_confidence(text, lsr, barrier_failures, neg_type, evidence)
+        confidence = conf_data["confidence"]
+        confidence_level = conf_data["confidence_level"]
+        conf_reasons = conf_data["reasons"]
+
+        # 6b. Calibrated System Confidence with Component Capping
+        barrier_top_conf = max([b["confidence_score"] for b in barrier_evidence], default=0.50) if barrier_evidence else 0.50
+        has_conflicts = (temporal_sequence in ("SAFE_TO_UNSAFE", "MULTI_STAGE_UNSAFE") and "maybe" in text.lower())
+        has_weak = len(barrier_evidence) == 0 and len(evidence) == 0
+
+        sys_conf_data = calculate_system_confidence(
+            barrier_confidence=barrier_top_conf,
+            rule_confidence=rule_confidence,
+            text_clarity=text_clarity,
+            confidence_penalty=adv_penalty,
+            has_conflicting_signals=has_conflicts,
+            has_weak_evidence=has_weak,
         )
-        display_barriers = prevented_barriers
-        recommended_actions = [
-            "Log positive safety intervention / near-miss report.",
-            "Complete required barrier control before authorizing work.",
-            "Verify all pre-entry and isolation checklists are formally signed off.",
-            "Brief the crew on safe work procedures prior to resumption."
-        ]
-    elif neg_type == "AMBIGUOUS":
-        sif_potential = "UNKNOWN"
-        explanation = (
-            f"AMBIGUOUS SCENARIO: Detected potential barrier deficiency ({', '.join(barrier_failures) if barrier_failures else 'Uncertain'}) "
-            f"with unclear operational exposure ('{neg_details.get('ambiguous_phrase')}'). "
-            f"Risk score evaluated at {score}/100 ({level}). Supervisor verification required. "
-            f"Confidence: {confidence} ({confidence_level}) — {'; '.join(conf_reasons)}."
-        )
-        display_barriers = barrier_failures if barrier_failures else ["Unknown Barrier Failure"]
-        recommended_actions = [
-            "Conduct immediate site walkthrough to verify operational status.",
-            "Clarify if personnel were exposed before work was stopped.",
-            "Ensure permit and safety controls are strictly validated before proceeding."
-        ]
-    else:
-        sif_keywords = ["confined space", "without gas testing", "lockout", "without isolation",
-                        "energized", "without harness", "suspended load", "line of fire",
-                        "chemical exposure", "oxygen deficient", "pressurized", "no permit", "not wearing", "no standby"]
-        has_sif = any(k in text.lower() for k in sif_keywords)
-        sif_potential = "YES" if (has_sif or score >= 70) else ("NO" if score <= 30 else "UNKNOWN")
-        
-        barrier_summary = f"{len(barrier_failures)} barrier failure(s) detected: {', '.join(barrier_failures)}" if barrier_failures else "Unknown Barrier Failure"
-        explanation = (
-            f"UNSAFE CONDITION / VIOLATION: Flagged under {lsr} Life-Saving Rule. {barrier_summary}. "
-            f"Risk score {score}/100 ({level}) increased due to missing safety controls during active work. SIF Potential: {sif_potential}. "
-            f"Confidence: {confidence} ({confidence_level}) — {'; '.join(conf_reasons)}."
-        )
-        display_barriers = barrier_failures if barrier_failures else ["Unknown Barrier Failure"]
-        recommended_actions = [
-            "Stop work immediately.",
-            "Apply all required barrier controls and obtain necessary permits.",
-            "Perform supervisor verification before resuming.",
-            "Brief all workers on Life-Saving Rules compliance."
-        ]
+        system_confidence = sys_conf_data["system_confidence"]
+        system_confidence_score = sys_conf_data["system_confidence_score"]
+        confidence_reason = sys_conf_data["confidence_reason"]
 
-    return {
-        "risk_score": score,
-        "risk_level": level,
-        "barrier_failures": display_barriers,
-        "barrier_failure": display_barriers[0] if display_barriers else "Unknown Barrier Failure",  # backward compat
-        "confidence": confidence,
-        "confidence_level": confidence_level,
-        "confidence_factors": conf_reasons,
-        "negation_type": neg_type,
-        "negation_details": neg_details,
-        "sif_potential": sif_potential,
-        "life_saving_rule": lsr,
-        "activity_detected": report.get("activity") or "General Activity",
-        "hazard_detected": "See evidence",
-        "evidence_phrases": evidence,
-        "explanation": explanation,
-        "risk_factors": risk_data["factors"],
-        "recommended_actions": recommended_actions,
-        "mode": "rule-based",
-    }
+        # Step 7: Safe Risk Normalization (Z-Score with std_dev < 5 guard)
+        norm_result = normalize_risk_score(raw_score)
+        normalized_score = norm_result["normalized_score"]
+        normalization_applied = norm_result["normalization_applied"]
 
+        # Step 8: SIF Potential & Explanations
+        if neg_type == "SAFE_PREVENTIVE":
+            sif_potential = "NO"
+            prevented_barriers = [f"Prevented: {b}" for b in barrier_failures] if barrier_failures else ["Safely Controlled"]
+            explanation = (
+                f"SAFE PREVENTIVE DECISION: Proactive intervention stopped/avoided hazard exposure before breach. "
+                f"Risk score reduced to {score}/100 ({level}) and SIF potential is NO. "
+                f"Timeline: {' -> '.join(temporal_timeline)}. Quality: {analysis_quality}. "
+                f"Confidence: {system_confidence} ({system_confidence_score})."
+            )
+            display_barriers = prevented_barriers
+            recommended_actions = [
+                "Log positive safety intervention / proactive stop report.",
+                "Complete required barrier control before authorizing work.",
+                "Verify pre-entry and isolation checklists are formally signed off.",
+                "Brief the crew on safe work procedures prior to resumption."
+            ]
+        elif neg_type == "AMBIGUOUS" or analysis_quality == "LOW":
+            sif_potential = "UNKNOWN"
+            explanation = (
+                f"AMBIGUOUS SCENARIO / LOW CLARITY: Detected potential barrier deficiency ({', '.join(barrier_failures) if barrier_failures else 'Uncertain'}). "
+                f"Risk score evaluated at {score}/100 ({level}). "
+                f"Analysis Quality: {analysis_quality} ({'; '.join(adv_flags) if adv_flags else 'Ambiguous wording'}). "
+                f"System Confidence: {system_confidence} ({system_confidence_score}). Supervisor verification required."
+            )
+            display_barriers = barrier_failures if barrier_failures else ["Unknown Barrier Failure"]
+            recommended_actions = [
+                "Conduct immediate site walkthrough to verify operational status.",
+                "Clarify if personnel were exposed before work was stopped.",
+                "Ensure permit and safety controls are strictly validated before proceeding."
+            ]
+        else:
+            sif_keywords = ["confined space", "without gas testing", "lockout", "without isolation",
+                            "energized", "without harness", "suspended load", "line of fire",
+                            "chemical exposure", "oxygen deficient", "pressurized", "no permit", "not wearing", "no standby"]
+            has_sif = any(k in text.lower() for k in sif_keywords)
+            sif_potential = "YES" if (has_sif or score >= 70) else ("NO" if score <= 30 else "UNKNOWN")
+
+            barrier_summary = f"{len(barrier_failures)} barrier failure(s) detected: {', '.join(barrier_failures)}" if barrier_failures else "Unknown Barrier Failure"
+            explanation = (
+                f"UNSAFE CONDITION / VIOLATION: Flagged under {lsr} Life-Saving Rule ({temporal_sequence}). {barrier_summary}. "
+                f"Timeline: {' -> '.join(temporal_timeline)}. "
+                f"Risk score {score}/100 ({level}) increased due to missing safety controls during active work. SIF Potential: {sif_potential}. "
+                f"System Confidence: {system_confidence} ({system_confidence_score}). Quality: {analysis_quality}."
+            )
+            display_barriers = barrier_failures if barrier_failures else ["Unknown Barrier Failure"]
+            recommended_actions = [
+                "Stop work immediately.",
+                "Apply all required barrier controls and obtain necessary permits.",
+                "Perform supervisor verification before resuming.",
+                "Brief all workers on Life-Saving Rules compliance."
+            ]
+
+        raw_output = {
+            "source": "engine",
+            "fallback_indicator": None,
+            "input_feedback": generate_input_feedback(analysis_quality),
+            "risk_score": score,
+            "raw_score": raw_score,
+            "normalized_score": normalized_score,
+            "normalization_applied": normalization_applied,
+            "risk_level": level,
+            "barrier_failures": display_barriers,
+            "barrier_failure": display_barriers[0] if display_barriers else "Unknown Barrier Failure",  # backward compat
+            "barrier_evidence": barrier_evidence,
+            "confidence": confidence,
+            "confidence_level": confidence_level,
+            "confidence_factors": conf_reasons,
+            "system_confidence": system_confidence,
+            "system_confidence_score": system_confidence_score,
+            "confidence_reason": confidence_reason,
+            "confidence_reason_user": sys_conf_data.get("confidence_reason_user", "High confidence in safety control detection."),
+            "analysis_quality": analysis_quality,
+            "adversarial_flags": adv_flags,
+            "temporal_sequence": temporal_sequence,
+            "temporal_timeline": temporal_timeline,
+            "negation_type": neg_type,
+            "negation_details": neg_details,
+            "sif_potential": sif_potential,
+            "life_saving_rule": lsr,
+            "primary_rule": primary_rule,
+            "secondary_rule": secondary_rule,
+            "rule_scores": rule_scores,
+            "activity_detected": report.get("activity") or "General Activity",
+            "hazard_detected": "See evidence",
+            "evidence_phrases": evidence,
+            "explanation": explanation,
+            "risk_factors": risk_data["factors"],
+            "recommended_actions": recommended_actions,
+            "mode": "rule-based",
+        }
+
+        # Step 9: Strict Validation & Fallback Guard
+        validated_output = validate_analysis_output(raw_output, raw_text=text)
+        logger.info(f"[FINAL_MERGED_RESULT] source={validated_output.get('source')} risk_score={validated_output['risk_score']} level={validated_output['risk_level']} barriers={validated_output['barrier_failures']}")
+        return validated_output
+
+    except Exception as exc:
+        logger.exception(f"Exception during analyze_report for text: '{text[:60]}...'")
+        return safe_fallback_analysis(text, reason=str(exc))
+
+
+
+# ─── AGGREGATIONS (FOR BACKWARD COMPATIBILITY) ────────────────────────────────
 
 def compute_patterns(reports: List[Dict]) -> List[Dict]:
     pattern_map: Dict[str, List] = {}
@@ -503,5 +802,3 @@ def compute_site_risk(reports: List[Dict]) -> List[Dict]:
             "risk_level": level, "risk_score": score,
         })
     return sorted(result, key=lambda x: -x["risk_score"])
-
-

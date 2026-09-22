@@ -46,15 +46,28 @@ def get_db_status(db: Session = Depends(get_db)):
     }
 
 
+from typing import Optional
 from database import engine
 
 @router.post("/admin/reset-db", summary="Hard reset database to clean empty state")
 @router.post("/admin/reset-database", summary="Hard reset database to clean empty state")
-def reset_database(db: Session = Depends(get_db)):
+def reset_database(
+    confirm: bool = False,
+    payload: Optional[dict] = None,
+    db: Session = Depends(get_db),
+):
     """
     Completely deletes all records from reports, actions, reviews, and uploaded_files tables,
     resets SQLite sequences, clears in-memory caches, runs VACUUM, and logs the reset event.
+    Requires confirmation flag (?confirm=true or body {"confirm": true}).
     """
+    is_confirmed = confirm or (payload and payload.get("confirm") is True)
+    if not is_confirmed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Database reset requires explicit confirmation. Pass query parameter '?confirm=true' or body {'confirm': true}.",
+        )
+
     try:
         total_reports = db.query(func.count(Report.report_id)).scalar() or 0
         total_actions = db.query(func.count(Action.id)).scalar() or 0
@@ -83,13 +96,16 @@ def reset_database(db: Session = Depends(get_db)):
         except Exception as vac_err:
             logger.warning(f"VACUUM note: {vac_err}")
 
-        # 4. Clear all in-memory caches
+        # 4. Clear all in-memory caches and trigger analytics refresh
         CACHE.clear()
+        from services.analytics_service import refresh_analytics_cache
+        refresh_analytics_cache(db)
 
         # 5. Structured logging
+        now_iso = datetime.now(timezone.utc).isoformat()
         log_payload = {
             "event": "database_reset",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": now_iso,
             "deleted_records": total_deleted,
             "details": {
                 "reports_deleted": total_reports,
@@ -104,6 +120,11 @@ def reset_database(db: Session = Depends(get_db)):
         return {
             "status": "database_cleared",
             "total_deleted": total_deleted,
+            "meta": {
+                "total_reports": 0,
+                "last_updated": now_iso,
+                "source": "db",
+            },
         }
 
     except Exception as exc:

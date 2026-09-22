@@ -1,0 +1,8 @@
+description,severity,report_type,site,activity,date
+Worker noticed missing gas test kit and proactively halted tank entry until atmospheric testing was completed.,Low,Near Miss,Site Alpha,Confined Space Pre-entry,2026-03-01
+Housekeeping audit in workshop noted safety glasses not worn during light material handling.,Medium,Unsafe Act,Site Alpha,Workshop Fabrication,2026-03-02
+Technician entered reactor vessel without permit and oxygen levels were not tested before entry.,Critical,Near Miss,Site Beta,Reactor Inspection,2026-03-03
+Pump maintenance team conducted motor overhaul without applying lockout tagout or energy isolation.,Critical,Unsafe Act,Site Alpha,Pump Maintenance,2026-03-04
+Secondary pump replacement initiated at transfer station without lockout tagout energy isolation.,Critical,Unsafe Act,Site Beta,Pump Overhaul,2026-03-05
+Emergency pump repair started on pipeline without applying lockout tagout isolation.,High,Unsafe Act,Site Gamma,Pipeline Maintenance,2026-03-06
+maybe unsafe conditions near electrical panel, not sure if safe or if breaker was isolated.,Medium,Unsafe Condition,Site Delta,Electrical Substation,2026-03-07

@@ -1,11 +1,21 @@
 """
 routes/dashboard.py — Database-backed dashboard & analytics endpoints.
 
+Single Source of Truth: All endpoints query services/analytics_service.py directly.
+
 Endpoints:
-- GET /api/dashboard/stats
-- GET /api/dashboard/summary
-- GET /api/risk-intelligence/trends
+- GET  /api/dashboard/stats
+- GET  /api/dashboard/summary
+- GET  /api/risk-intelligence/trends
+- GET  /api/analytics/patterns
+- GET  /api/analytics/sites
+- GET  /api/analytics/activities
+- GET  /api/analytics/command-center
+- POST /api/refresh-analytics
+- GET  /api/debug/count
 """
+from datetime import datetime, timezone
+from typing import Any
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
@@ -18,13 +28,21 @@ from schemas import (
     ActivityRiskItem,
     CommandCenterResponse,
     DebugCountResponse,
+    MetaInfo,
 )
-import services.dashboard_service as dash_svc
+import services.analytics_service as analytics_svc
 
 router = APIRouter(
     tags=["Dashboard & Intelligence"],
 )
 
+
+def _build_meta(total_reports: int) -> dict[str, Any]:
+    return {
+        "total_reports": total_reports,
+        "last_updated":  datetime.now(timezone.utc).isoformat(),
+        "source":        "db",
+    }
 
 
 @router.get(
@@ -40,43 +58,56 @@ router = APIRouter(
 def get_dashboard_stats(
     db: Session = Depends(get_db),
 ) -> DashboardResponse:
-    data = dash_svc.get_dashboard_data(db)
+    data = analytics_svc.get_dashboard_data(db)
+    meta = _build_meta(data.total_reports)
+    raw_dict = {
+        "total_reports":         data.total_reports,
+        "sif_count":             data.sif_count,
+        "non_sif_count":         data.non_sif_count,
+        "critical_count":        data.critical_count,
+        "high_risk_count":       data.high_risk_count,
+        "sif_percentage":        data.sif_percentage,
+        "risk_distribution":     data.risk_distribution,
+        "category_distribution": data.category_distribution,
+        "avg_risk_score":        data.avg_risk_score,
+        "top_category":          data.top_category,
+        "top_risk_level":        data.top_risk_level,
+    }
     return DashboardResponse(
-        total_reports         = data.total_reports,
-        sif_count             = data.sif_count,
-        non_sif_count         = data.non_sif_count,
-        critical_count        = data.critical_count,
-        high_risk_count       = data.high_risk_count,
-        sif_percentage        = data.sif_percentage,
-        risk_distribution     = data.risk_distribution,
-        category_distribution = data.category_distribution,
-        avg_risk_score        = data.avg_risk_score,
-        top_category          = data.top_category,
-        top_risk_level        = data.top_risk_level,
+        **raw_dict,
+        data=raw_dict,
+        meta=MetaInfo(**meta),
     )
 
 
 @router.get(
     "/risk-intelligence/trends",
-    response_model=list[TrendPoint],
-    summary="Monthly risk and safety trend series",
+    summary="Monthly risk and safety trend series with trend direction and anomaly insights",
 )
 @router.get(
     "/risk-intelligence",
-    response_model=list[TrendPoint],
     summary="Monthly risk intelligence trends",
 )
 def get_risk_trends(
     db: Session = Depends(get_db),
-) -> list[TrendPoint]:
-    trends = dash_svc.get_monthly_trends(db)
-    return [TrendPoint(**t) for t in trends]
+):
+    total = analytics_svc.get_total_reports(db)
+    intel = analytics_svc.get_pattern_intelligence(db)
+    trends = analytics_svc.get_monthly_trends(db)
+    meta = _build_meta(total)
+    return {
+        "data":          trends,
+        "trend":         intel["trend_summary"]["trend"],
+        "trend_reason":  intel["trend_summary"]["reason"],
+        "anomalies":     intel["anomalies"],
+        "insights":      intel["insights"],
+        "meta":          meta,
+    }
 
 
 @router.get(
     "/analytics/patterns",
-    response_model=list[dash_svc.PatternItem] if hasattr(dash_svc, "PatternItem") else list,
-    summary="Recurring safety pattern clusters grouped by category",
+    summary="Recurring safety pattern clusters grouped by similarity clustering",
 )
 @router.get(
     "/patterns",
@@ -85,7 +116,33 @@ def get_risk_trends(
 def get_patterns(
     db: Session = Depends(get_db),
 ):
-    return dash_svc.get_patterns_data(db)
+    total = analytics_svc.get_total_reports(db)
+    intel = analytics_svc.get_pattern_intelligence(db)
+    return {
+        "data":              intel["clusters"],
+        "repeated_failures": intel["repeated_failures"],
+        "insights":          intel["insights"],
+        "meta":              _build_meta(total),
+    }
+
+
+@router.get(
+    "/analytics/insights",
+    summary="AI safety intelligence insights across patterns, anomalies, and trends",
+)
+@router.get(
+    "/insights",
+    summary="AI safety intelligence insights endpoint",
+)
+def get_insights(
+    db: Session = Depends(get_db),
+):
+    total = analytics_svc.get_total_reports(db)
+    insights = analytics_svc.get_all_insights(db)
+    return {
+        "data": insights,
+        "meta": _build_meta(total),
+    }
 
 
 @router.get(
@@ -99,7 +156,12 @@ def get_patterns(
 def get_sites(
     db: Session = Depends(get_db),
 ):
-    return dash_svc.get_sites_data(db)
+    total = analytics_svc.get_total_reports(db)
+    sites = analytics_svc.get_site_stats(db)
+    return {
+        "data": sites,
+        "meta": _build_meta(total),
+    }
 
 
 @router.get(
@@ -113,7 +175,12 @@ def get_sites(
 def get_activities(
     db: Session = Depends(get_db),
 ):
-    return dash_svc.get_activities_data(db)
+    total = analytics_svc.get_total_reports(db)
+    activities = analytics_svc.get_activity_stats(db)
+    return {
+        "data": activities,
+        "meta": _build_meta(total),
+    }
 
 
 @router.get(
@@ -127,7 +194,30 @@ def get_activities(
 def get_command_center(
     db: Session = Depends(get_db),
 ):
-    return dash_svc.get_command_center_data(db)
+    cc_data = analytics_svc.get_command_center_data(db)
+    return {
+        "data": cc_data,
+        "meta": _build_meta(cc_data.get("total_reports", 0)),
+        **cc_data,  # backward compatibility for direct field access
+    }
+
+
+@router.post(
+    "/refresh-analytics",
+    summary="Force refresh analytics cache and recompute aggregations",
+)
+def refresh_analytics(
+    db: Session = Depends(get_db),
+):
+    """
+    Clears cache, recomputes all metric aggregations across reports, and returns fresh state.
+    """
+    result = analytics_svc.refresh_analytics_cache(db)
+    return {
+        "data": result,
+        "meta": _build_meta(result["total_reports"]),
+        **result,
+    }
 
 
 @router.get(
@@ -137,5 +227,9 @@ def get_command_center(
 def get_debug_count(
     db: Session = Depends(get_db),
 ):
-    return dash_svc.get_debug_counts(db)
-
+    counts = analytics_svc.get_debug_counts(db)
+    return {
+        "data": counts,
+        "meta": _build_meta(counts.get("total_reports", 0)),
+        **counts,
+    }

@@ -5,21 +5,17 @@ Responsibilities
 ----------------
 1. Parse the uploaded file bytes with pandas (CSV or Excel).
 2. Validate structure: file must not be empty, must contain a 'description' column.
-3. For every valid row, call report_service.analyze_text() to classify + score.
-4. Bulk-insert all Report ORM objects in a single DB transaction for performance.
-5. Return a typed UploadResult dataclass consumed by the route layer.
-
-Rules
------
-- NO mock data.
-- NO hardcoded descriptions or scores.
-- Every value comes from the uploaded file or the rule engine.
-- Reuses report_service.analyze_text() — no duplicated logic.
+3. For every valid row, compute deterministic content_hash (description + date + site).
+4. Run rule engine analysis (category, risk_score, sif_potential, risk_level).
+5. Bulk-insert all unique Report ORM objects in a single DB transaction.
+6. Automatically trigger refresh_analytics_cache(db).
+7. Return a typed UploadResult dataclass consumed by the route layer.
 """
 from __future__ import annotations
 
 import hashlib
 import io
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
@@ -28,10 +24,16 @@ import pandas as pd
 from sqlalchemy.orm import Session
 
 from models import Report, UploadedFile
-from services.report_service import analyze_text
+from services.report_service import (
+    analyze_text,
+    compute_content_hash,
+    normalize_text,
+    normalize_date,
+)
+from services.analytics_service import refresh_analytics_cache
 
-
-# ─── Constants ────────────────────────────────────────────────────────────────
+logger = logging.getLogger("safesense.upload")
+logging.basicConfig(level=logging.INFO)
 
 # The mandatory description column aliases.
 _DESCRIPTION_ALIASES = {
@@ -52,29 +54,6 @@ _OPTIONAL_DATE        = {"date", "incident_date", "timestamp", "datetime", "crea
 _OPTIONAL_LOCATION    = {"location", "site", "area", "workplace", "facility", "plant"}
 
 SAMPLE_SIZE = 5   # number of processed rows returned in the response
-
-
-def normalize_date_string(date_val: str) -> str:
-    """Normalize date string to YYYY-MM-DD or default to today's date."""
-    if not date_val or not str(date_val).strip():
-        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    s = str(date_val).strip()
-    try:
-        dt = pd.to_datetime(s, errors="coerce")
-        if pd.notnull(dt):
-            return dt.strftime("%Y-%m-%d")
-    except Exception:
-        pass
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-
-def generate_deterministic_report_id(description: str, date: str = "", category: str = "") -> str:
-    """Generate deterministic MD5 fingerprint from description + date + category."""
-    norm_desc = " ".join((description or "").strip().lower().split())
-    norm_date = (date or "").strip().lower()
-    norm_cat  = (category or "").strip().lower()
-    raw = f"{norm_desc}|{norm_date}|{norm_cat}"
-    return hashlib.md5(raw.encode("utf-8")).hexdigest()
 
 
 # ─── Result dataclasses ───────────────────────────────────────────────────────
@@ -176,7 +155,7 @@ def process_csv_upload(
     filename:   str,
 ) -> UploadResult:
     """
-    Full pipeline: parse → validate → deduplicate → analyse → persist → summarise.
+    Full pipeline: parse → validate → deduplicate → analyse → persist → auto-refresh.
     """
     # ── 1. Parse file ─────────────────────────────────────────────────────────
     df = _parse_bytes(file_bytes, filename)
@@ -203,13 +182,19 @@ def process_csv_upload(
     site_col        = _detect_optional_column(list(df.columns), _OPTIONAL_LOCATION)
     activity_col    = _detect_optional_column(list(df.columns), {"activity", "task", "work", "operation", "job"})
 
-    # ── 3. Preload existing IDs for row-level deduplication ───────────────────
+    # ── 3. Preload existing IDs and hashes for row-level deduplication ────────
     existing_db_ids: set[str] = {
         row[0]
         for row in db.query(Report.report_id).all()
         if row[0]
     }
-    seen_in_batch: set[str] = set()
+    existing_db_hashes: set[str] = {
+        row[0]
+        for row in db.query(Report.content_hash).all()
+        if row[0]
+    }
+    seen_in_batch_ids: set[str] = set()
+    seen_in_batch_hashes: set[str] = set()
 
     # ── 4. Process rows ───────────────────────────────────────────────────────
     db_objects:         list[Report]       = []
@@ -223,7 +208,7 @@ def process_csv_upload(
     now = datetime.now(timezone.utc)
 
     for idx, row in df.iterrows():
-        description = str(row[desc_col]).strip()
+        description = normalize_text(str(row[desc_col]))
 
         # Skip rows where description is missing or too short
         if len(description) < 5:
@@ -236,16 +221,19 @@ def process_csv_upload(
             continue
 
         # Extract optional fields
-        severity    = str(row[severity_col]).strip()    if severity_col    else ""
-        report_type = str(row[report_type_col]).strip() if report_type_col else ""
-        date_raw    = str(row[date_col]).strip()        if date_col        else ""
-        date_val    = normalize_date_string(date_raw)
+        severity    = normalize_text(str(row[severity_col]))    if severity_col    else ""
+        report_type = normalize_text(str(row[report_type_col])) if report_type_col else ""
+        date_raw    = normalize_text(str(row[date_col]))        if date_col        else ""
+        date_val    = normalize_date(date_raw)
         
         # Site & Activity extraction with auto-fix fallback defaults
-        site_raw     = str(row[site_col]).strip()     if site_col     else ""
-        activity_raw = str(row[activity_col]).strip() if activity_col else ""
+        site_raw     = normalize_text(str(row[site_col]))     if site_col     else ""
+        activity_raw = normalize_text(str(row[activity_col])) if activity_col else ""
         site_val     = site_raw if site_raw else "Site Alpha"
         activity_val = activity_raw if activity_raw else "General Operation"
+
+        # Compute content hash
+        c_hash = compute_content_hash(description, date_val, site_val)
 
         # Run rule engine
         analysis = analyze_text(description)
@@ -255,14 +243,20 @@ def process_csv_upload(
         if report_id_col and str(row[report_id_col]).strip():
             row_id = str(row[report_id_col]).strip()
         else:
-            row_id = generate_deterministic_report_id(description, date_val, cat_val)
+            row_id = c_hash
 
-        # Check for duplicate
-        if row_id in existing_db_ids or row_id in seen_in_batch:
+        # Check for duplicate by ID or by content hash
+        if (
+            row_id in existing_db_ids
+            or row_id in seen_in_batch_ids
+            or c_hash in existing_db_hashes
+            or c_hash in seen_in_batch_hashes
+        ):
             duplicates_skipped += 1
             continue
 
-        seen_in_batch.add(row_id)
+        seen_in_batch_ids.add(row_id)
+        seen_in_batch_hashes.add(c_hash)
 
         # Determine risk level
         effective_level = analysis["risk_level"]
@@ -272,6 +266,7 @@ def process_csv_upload(
         # Build ORM object
         db_obj = Report(
             report_id     = row_id,
+            content_hash  = c_hash,
             description   = description,
             category      = cat_val,
             risk_score    = analysis["risk_score"],
@@ -310,12 +305,14 @@ def process_csv_upload(
             f"All {skipped} row(s) were skipped ({skipped_reasons[0] if skipped_reasons else 'empty descriptions'})."
         )
 
-    # ── 5. Bulk insert ────────────────────────────────────────────────────────
+    # ── 5. Bulk insert & automatic analytics cache refresh ────────────────────
     if db_objects:
         db.add_all(db_objects)
         db.commit()
+        # Automatically refresh analytics cache after inserting new records
+        refresh_analytics_cache(db)
 
-    # Track uploaded file hash if not already present
+    # Track uploaded file hash for idempotent file-level tracking
     file_hash = hashlib.md5(file_bytes).hexdigest()
     try:
         existing_file = db.query(UploadedFile).filter(UploadedFile.file_hash == file_hash).first()
@@ -334,6 +331,11 @@ def process_csv_upload(
         f"Successfully ingested {len(db_objects)} new reports."
         if duplicates_skipped == 0
         else f"Ingested {len(db_objects)} new reports ({duplicates_skipped} duplicate rows skipped)."
+    )
+
+    logger.info(
+        f"[{datetime.now(timezone.utc).isoformat()}] EVENT=bulk_upload_completed "
+        f"FILENAME={filename} INSERTED={len(db_objects)} DUPLICATES={duplicates_skipped} TOTAL_ROWS={len(df)}"
     )
 
     return UploadResult(

@@ -26,6 +26,7 @@ class Report(Base):
     __tablename__ = "reports"
 
     report_id     = Column(String(64),    primary_key=True, index=True)
+    content_hash  = Column(String(64),    unique=True, index=True, nullable=True)
     description   = Column(Text,          nullable=False)
     category      = Column(String(100),   nullable=False, default="General Safety")
     risk_level    = Column(String(10),    nullable=False, default="LOW")
@@ -52,11 +53,12 @@ class Report(Base):
         Index("ix_reports_category",      "category"),
         Index("ix_reports_site",          "site"),
         Index("ix_reports_activity",      "activity"),
+        Index("ix_reports_content_hash",  "content_hash", unique=True),
     )
 
     def __repr__(self) -> str:
         return (
-            f"<Report report_id={self.report_id!r} category={self.category!r} "
+            f"<Report report_id={self.report_id!r} hash={self.content_hash!r} category={self.category!r} "
             f"site={self.site!r} activity={self.activity!r} "
             f"risk_score={self.risk_score} level={self.risk_level} date={self.date!r}>"
         )

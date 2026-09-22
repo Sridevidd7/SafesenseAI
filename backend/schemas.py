@@ -6,6 +6,7 @@ Separation of concerns:
   ReportResponse → shapes the API response (never exposes ORM internals)
 """
 from datetime import datetime
+from typing import Any
 from pydantic import BaseModel, Field, ConfigDict
 
 
@@ -24,6 +25,19 @@ class ReportCreate(BaseModel):
         description="Full text of the safety observation (10–5000 characters)",
         examples=["Worker entered confined space without completing gas testing."],
     )
+
+
+# ─── Metadata & Response Envelope schemas ────────────────────────────────────
+
+class MetaInfo(BaseModel):
+    total_reports: int = 0
+    last_updated:  str = ""
+    source:        str = "db"
+
+
+class GenericResponse(BaseModel):
+    data: Any
+    meta: MetaInfo
 
 
 # ─── Response schemas ─────────────────────────────────────────────────────────
@@ -46,6 +60,8 @@ class ReportResponse(BaseModel):
     activity:      str = "General Operation"
     date:          str | None = None
     created_at:    datetime | None = None
+    data:          dict[str, Any] | None = None
+    meta:          MetaInfo | None = None
 
     def __init__(self, **data):
         if "id" not in data or data["id"] is None:
@@ -61,6 +77,8 @@ class ReportListResponse(BaseModel):
     """Wrapper for the GET /reports list endpoint."""
     total:   int
     reports: list[ReportResponse]
+    data:    list[ReportResponse] | None = None
+    meta:    MetaInfo | None = None
 
 
 # ─── CSV Upload schemas ───────────────────────────────────────────────────────
@@ -175,6 +193,8 @@ class DashboardResponse(BaseModel):
     avg_risk_score:        float = Field(description="Arithmetic mean of all risk_score values")
     top_category:          str   = Field(description="Category with the most reports")
     top_risk_level:        str   = Field(description="Risk level with the most reports")
+    data:                  dict[str, Any] | None = Field(default=None, description="Enveloped data dictionary")
+    meta:                  MetaInfo | None = Field(default=None, description="Metadata with total count, source, timestamp")
 
 
 # ─── Risk Intelligence Trends schema ─────────────────────────────────────────

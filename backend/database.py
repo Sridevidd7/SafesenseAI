@@ -1,12 +1,11 @@
-"""
-database.py — SQLAlchemy engine, session, and base setup.
-Uses SQLite for zero-config local development.
-"""
-from sqlalchemy import create_engine
+import os
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
-# SQLite database file — created automatically on first run
-DATABASE_URL = "sqlite:///./safety.db"
+# SQLite database file — use absolute path to guarantee same DB regardless of cwd
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATABASE_PATH = os.path.join(BASE_DIR, "safety.db")
+DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
 
 engine = create_engine(
     DATABASE_URL,
@@ -29,9 +28,8 @@ class Base(DeclarativeBase):
 
 def ensure_schema_migrations():
     """
-    Ensure newly added columns exist in existing SQLite tables.
+    Ensure newly added columns and constraints exist in existing SQLite tables.
     """
-    from sqlalchemy import text
     with engine.connect() as conn:
         try:
             # Check existing columns in reports table
@@ -44,8 +42,11 @@ def ensure_schema_migrations():
                 if "activity" not in existing_cols:
                     conn.execute(text("ALTER TABLE reports ADD COLUMN activity VARCHAR DEFAULT 'General Operation';"))
                     conn.execute(text("CREATE INDEX IF NOT EXISTS ix_reports_activity ON reports (activity);"))
+                if "content_hash" not in existing_cols:
+                    conn.execute(text("ALTER TABLE reports ADD COLUMN content_hash VARCHAR(64);"))
+                    conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_reports_content_hash ON reports (content_hash);"))
                 conn.commit()
-        except Exception as e:
+        except Exception:
             # Table might not exist yet on fresh start, create_all handles it
             pass
 

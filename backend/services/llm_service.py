@@ -195,10 +195,16 @@ async def generate_llm_explanation(report_data: dict) -> dict:
     rule = report_data.get("life_saving_rule") or report_data.get("category", "General Safety")
     barriers = report_data.get("barrier_failures") or [report_data.get("barrier_failure", "Unknown")]
     barrier_list = barriers if isinstance(barriers, list) else [str(barriers)]
+    primary_rule = report_data.get("primary_rule") or rule
+    secondary_rule = report_data.get("secondary_rule")
+    rule_scores = report_data.get("rule_scores") or {}
+    rule_scores_str = json.dumps(rule_scores) if rule_scores else "None"
     score = report_data.get("risk_score", 0)
     level = report_data.get("risk_level", "LOW")
     sif = report_data.get("sif_potential", "NO")
     confidence = report_data.get("confidence", 0.8)
+    barrier_evidence = report_data.get("barrier_evidence") or []
+    evidence_str = json.dumps(barrier_evidence, default=str) if barrier_evidence else "None"
 
     # 1. Caching check
     cache_key = get_cache_key(report_data)
@@ -323,10 +329,14 @@ INPUT DATA
 
 Description: {desc}
 Life-Saving Rule: {rule}
+Primary Life-Saving Rule: {primary_rule}
+Secondary Life-Saving Rule: {secondary_rule or 'None'}
+Rule Scores: {rule_scores_str}
 Barrier Failures: {', '.join(barrier_list)}
 Risk Score: {score}/100 ({level})
 SIF Potential: {sif}
 Confidence: {confidence}
+Barrier Evidence: {evidence_str}
 
 ========================
 FINAL INSTRUCTION

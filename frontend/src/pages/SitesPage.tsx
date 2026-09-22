@@ -51,7 +51,8 @@ export default function SitesPage() {
     return () => window.removeEventListener('safesense:data-updated', handleUpdate);
   }, [loadData]);
 
-  if (loading && siteRisks.length === 0 && activityRisks.length === 0) {
+  // ─── Loading State ─────────────────────────────────────────────────────────
+  if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="flex flex-col items-center gap-3">
@@ -62,8 +63,27 @@ export default function SitesPage() {
     );
   }
 
-  if (!loading && siteRisks.length === 0 && activityRisks.length === 0 && !error) {
-    return <EmptyState />;
+  // ─── Error State ───────────────────────────────────────────────────────────
+  if (error && siteRisks.length === 0 && activityRisks.length === 0) {
+    return (
+      <div className="card border-red-200 bg-red-50/50 p-8 text-center max-w-lg mx-auto my-12 space-y-4">
+        <h3 className="text-lg font-bold text-slate-900">Failed to Load Sites & Activities</h3>
+        <p className="text-xs text-red-700">{error}</p>
+        <button onClick={() => loadData(true)} className="btn-primary mx-auto text-xs">
+          <RefreshCw className="w-3.5 h-3.5" /> Retry
+        </button>
+      </div>
+    );
+  }
+
+  // ─── Empty State ───────────────────────────────────────────────────────────
+  if (siteRisks.length === 0 && activityRisks.length === 0) {
+    return (
+      <EmptyState
+        title="No Sites or Activities Data"
+        message="Upload a safety dataset to view site facility rankings and task activity risk metrics."
+      />
+    );
   }
 
   const noSiteData = siteRisks.length === 0;

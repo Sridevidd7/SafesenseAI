@@ -10,14 +10,24 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from sqlalchemy.orm import Session
 
 from database import get_db
-from schemas import ReportCreate, ReportResponse, ReportListResponse, UploadResponse
+from datetime import datetime, timezone
+from schemas import ReportCreate, ReportResponse, ReportListResponse, UploadResponse, MetaInfo
 import services.report_service as svc
 import services.upload_service as upload_svc
+import services.analytics_service as analytics_svc
 
 router = APIRouter(
     prefix="/reports",
     tags=["Reports"],
 )
+
+
+def _build_meta(total_reports: int) -> MetaInfo:
+    return MetaInfo(
+        total_reports=total_reports,
+        last_updated=datetime.now(timezone.utc).isoformat(),
+        source="db",
+    )
 
 
 @router.post(
@@ -36,7 +46,27 @@ def create_report(
     db: Session = Depends(get_db),
 ) -> ReportResponse:
     report = svc.create_report(db, payload)
-    return report
+    total = analytics_svc.get_total_reports(db)
+    meta = _build_meta(total)
+    
+    rep_dict = {
+        "report_id":     report.report_id,
+        "id":            report.report_id,
+        "description":   report.description,
+        "category":      report.category,
+        "risk_score":    report.risk_score,
+        "sif_potential": report.sif_potential,
+        "risk_level":    report.risk_level,
+        "site":          report.site,
+        "activity":      report.activity,
+        "date":          report.date,
+        "created_at":    report.created_at,
+    }
+    return ReportResponse(
+        **rep_dict,
+        data=rep_dict,
+        meta=meta,
+    )
 
 
 from typing import Optional
@@ -61,7 +91,14 @@ def list_reports(
         limit=limit,
         offset=offset,
     )
-    return ReportListResponse(total=total, reports=reports)
+    meta = _build_meta(total)
+    resp_reports = [ReportResponse.model_validate(r) for r in reports]
+    return ReportListResponse(
+        total=total,
+        reports=resp_reports,
+        data=resp_reports,
+        meta=meta,
+    )
 
 
 @router.get(
@@ -79,7 +116,26 @@ def get_report(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Report with id={report_id} not found.",
         )
-    return report
+    total = analytics_svc.get_total_reports(db)
+    meta = _build_meta(total)
+    rep_dict = {
+        "report_id":     report.report_id,
+        "id":            report.report_id,
+        "description":   report.description,
+        "category":      report.category,
+        "risk_score":    report.risk_score,
+        "sif_potential": report.sif_potential,
+        "risk_level":    report.risk_level,
+        "site":          report.site,
+        "activity":      report.activity,
+        "date":          report.date,
+        "created_at":    report.created_at,
+    }
+    return ReportResponse(
+        **rep_dict,
+        data=rep_dict,
+        meta=meta,
+    )
 
 
 from services.llm_service import generate_llm_explanation
@@ -109,7 +165,11 @@ async def explain_report(
         "report_id": report.report_id,
         "description": report.description,
         "life_saving_rule": report.category or analysis.get("life_saving_rule"),
+        "primary_rule": analysis.get("primary_rule") or report.category or analysis.get("life_saving_rule"),
+        "secondary_rule": analysis.get("secondary_rule"),
+        "rule_scores": analysis.get("rule_scores", {}),
         "barrier_failures": analysis.get("barrier_failures") or [report.category],
+        "barrier_evidence": analysis.get("barrier_evidence") or [],
         "risk_score": report.risk_score,
         "risk_level": report.risk_level,
         "sif_potential": report.sif_potential,

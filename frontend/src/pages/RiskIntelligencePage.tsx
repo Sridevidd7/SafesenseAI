@@ -2,13 +2,15 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Legend } from 'recharts';
 import { AlertTriangle, TrendingUp, Activity, RefreshCw, Database, ShieldAlert, Sparkles } from 'lucide-react';
 import EmptyState from '../components/EmptyState';
-import { fetchReports, fetchRiskIntelligenceTrends, ApiReport, TrendPoint } from '../services/api';
+import { fetchReports, fetchTrendsIntelligence, ApiReport, TrendPoint } from '../services/api';
 import { computeEarlyWarnings, computeBarrierFailures, detectBarrierFailure } from '../utils/riskEngine';
 import { SafetyReport, RiskLevel, SIFPotential } from '../types';
 
 export default function RiskIntelligencePage() {
   const [reports, setReports] = useState<ApiReport[]>([]);
   const [trends, setTrends] = useState<TrendPoint[]>([]);
+  const [trendStatus, setTrendStatus] = useState<string>('STABLE');
+  const [trendReason, setTrendReason] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -26,7 +28,7 @@ export default function RiskIntelligencePage() {
     try {
       const [reportsRes, trendsRes] = await Promise.all([
         fetchReports(),
-        fetchRiskIntelligenceTrends().catch(() => [] as TrendPoint[]),
+        fetchTrendsIntelligence().catch(() => ({ data: [], trend: 'STABLE', trend_reason: '', anomalies: [], insights: [] })),
       ]);
 
       const rawList: ApiReport[] =
@@ -35,7 +37,9 @@ export default function RiskIntelligencePage() {
         (Array.isArray(reportsRes) ? reportsRes : []);
 
       setReports(rawList);
-      setTrends(trendsRes || []);
+      setTrends(trendsRes.data || []);
+      setTrendStatus(trendsRes.trend || 'STABLE');
+      setTrendReason(trendsRes.trend_reason || '');
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to fetch safety intelligence data';
       console.error('Risk Intelligence fetch error:', err);
@@ -272,9 +276,32 @@ export default function RiskIntelligencePage() {
       {/* ─── Monthly Safety Trend ──────────────────────────────────────────── */}
       {monthlyData.length > 0 ? (
         <section>
-          <h2 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2">
-            <TrendingUp className="w-4 h-4 text-blue-600" /> Monthly Safety Trend
-          </h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
+              <TrendingUp className="w-4 h-4 text-blue-600" /> Monthly Safety Trend
+            </h2>
+            <div className="flex items-center gap-2">
+              <span
+                className={`text-xs font-bold px-2.5 py-1 rounded-md border ${
+                  trendStatus === 'RISING RISK'
+                    ? 'bg-red-50 text-red-700 border-red-200'
+                    : trendStatus === 'IMPROVING'
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    : 'bg-slate-50 text-slate-700 border-slate-200'
+                }`}
+              >
+                Trajectory: {trendStatus}
+              </span>
+            </div>
+          </div>
+          {trendReason && (
+            <div className="mb-3 p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-blue-600 shrink-0" />
+              <span>
+                <strong>AI Trend Assessment:</strong> {trendReason}
+              </span>
+            </div>
+          )}
           <div className="card">
             <ResponsiveContainer width="100%" height={260}>
               <LineChart data={monthlyData}>
