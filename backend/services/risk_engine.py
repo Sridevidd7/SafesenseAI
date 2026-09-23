@@ -66,12 +66,15 @@ PREVENTIVE_STOP_REGEX = re.compile(
     r"(?:ordered|issued|enforced)\s+(?:a\s+)?stop[\s-]?work|"
     r"stop[\s-]?work|"
     r"stopped\s+(?:work|the\s+work|entry|task|job|activity|operation|hot\s+work|maintenance|welding|climbing)?|"
-    r"halted\s+(?:work|the\s+work|entry|task|job|activity|operation)?|"
+    r"halted\s+(?:work|the\s+work|entry|task|job|activity|operation|the\s+operation)?|"
     r"aborted\s+(?:entry|operation|task|job|activity)?|"
-    r"suspended\s+(?:work|entry|task|job|activity|operation)?|"
+    r"suspended\s+(?:work|the\s+work|entry|task|job|activity|operation|the\s+operation)?|"
     r"avoided\s+(?:entering|working|climbing|proceeding|operating|starting|entry|work)?|"
     r"refused\s+(?:to\s+enter|to\s+work|to\s+proceed|to\s+climb|to\s+start|entry)?|"
-    r"intervened\s+and\s+stopped|"
+    r"(?:supervisor|management|operator|team|lead)\s+(?:intervened|halted|stopped|suspended)|"
+    r"intervened\s+(?:and\s+)?(?:stopped|halted)?|"
+    r"(?:was\s+)?prevented\s+(?:from\s+)?(?:entering|proceeding|working|climbing|operating)?|"
+    r"prevented\s+(?:the\s+worker\s+|the\s+operator\s+|entry|work)|"
     r"held\s+back\s+from|"
     r"stayed\s+back\s+from"
     r")\b",
@@ -83,12 +86,63 @@ NEGATED_STOP_REGEX = re.compile(
     re.IGNORECASE
 )
 
+PRE_EXPOSURE_PREVENTION_REGEX = re.compile(
+    r"\b("
+    r"(?:stopped|halted|intervened|suspended|prevented|held\s+back|proactively\s+halted)\s+(?:.*?\s+)?(?:before|until|prior\s+to)\s+(?:any\s+)?(?:entry|entering|servicing|work|starting|climbing|proceeding|exposure|operation|use|using|testing|atmospheric\s+testing)|"
+    r"prevented\s+(?:.*?\s+)?from\s+(?:entering|climbing|operating|working|proceeding)|"
+    r"(?:before|until|prior\s+to)\s+(?:any\s+)?(?:entry|entering|servicing|anyone\s+(?:entered|tripped|fell|was\s+exposed|was\s+injured|was\s+harmed)|work\s+(?:began|started)|starting|climbing|exposure)|"
+    r"(?:halted|stopped)\s+(?:.*?\s+)?until\s+(?:.*?\s+)?(?:completed|conducted|performed|done|verified)|"
+    r"(?:preparing|about|attempted|attempting)\s+to\s+(?:enter|climb|work|operate)\s+.*?\s+(?:stopped|halted|prevented|intervened)|"
+    r"(?:completed|verified|conducted|performed|obtained|issued)\s+before\s+(?:entry|entering|work|resumed)"
+    r")\b",
+    re.IGNORECASE
+)
+
+POST_EXPOSURE_INDICATORS = re.compile(
+    r"\b("
+    r"after\s+(?:the\s+)?(?:unsafe|entry|entering|work|incident|condition|breach|had\s+already)|"
+    r"had\s+already\s+(?:entered|started|begun|operated|climbed)|"
+    r"already\s+(?:entered|inside|operating|working)|"
+    r"entered\s+.*?\s+when\s+(?:the\s+)?(?:supervisor|management)\s+intervened|"
+    r"(?:was\s+)?(?:suspended|stopped|halted)\s+after"
+    r")\b",
+    re.IGNORECASE
+)
+
+ACTIVE_EXPOSURE_REGEX = re.compile(
+    r"\b("
+    r"(?:entered|was\s+entering|had\s+entered|proceeded\s+to\s+enter|inside)\s+(?:the\s+)?(?:confined\s+space|vessel|tank|reactor|column|sump|pit)|"
+    r"(?:working|worked|operating|operated)\s+(?:on|with|inside)\s+(?:live|energized|circuit|switchgear)|"
+    r"(?:climbed|climbing|working|worked)\s+(?:at\s+height|on\s+scaffold|on\s+ladder|on\s+roof)|"
+    r"(?:grinding|welding|cutting)\s+.*?\s+without|"
+    r"without\s+(?:gas\s+test|permit|isolation|lockout|harness|ppe|safety\s+glasses|fire\s+watch|standby)\s+.*?\s+(?:work\s+continued|proceeded|continued|entered)|"
+    r"(?:entered|operated|worked|grinding|welding|climbed)\s+without|"
+    r"without\s+.*?\s+(?:entered|operated|worked|climbed)"
+    r")\b",
+    re.IGNORECASE
+)
+
+EXPOSURE_ABSENT_OR_PREVENTED_REGEX = re.compile(
+    r"\b("
+    r"no(?:body|\s+one)?\s+(?:was\s+)?(?:exposed|harmed|injured)|"
+    r"no\s+(?:harm|injury|exposure)|"
+    r"without\s+(?:exposure|incident|injury|harm)|"
+    r"nobody\s+(?:was\s+)?injured|"
+    r"before\s+(?:anyone|injury|harm|tripped|entered|was\s+exposed)|"
+    r"prevented\s+from\s+entering|"
+    r"picked\s+it\s+up\s+immediately|"
+    r"work\s+was\s+not\s+affected"
+    r")\b",
+    re.IGNORECASE
+)
+
 NEGATED_BARRIER_REGEX = re.compile(
     r"\b("
     r"(?:without|with\s+no|no|missing|lack\s+of|absence\s+of|failed\s+to\s+(?:conduct|perform|obtain|wear|apply|use))\s+"
+    r"(?:any\s+|approved\s+|proper\s+|required\s+|standard\s+|valid\s+)?"
     r"(?:gas\s+test(?:ing)?|atmospheric\s+test(?:ing)?|testing|permit(?: to work)?|ptw|authorization|clearance|isolation|lockout|tagout|loto|harness|fall\s+protection|fall\s+arrest|ppe|safety\s+glasses|gloves|helmet|mask|respirator|fire\s+watch|standby(?:\s+person)?|attendant|ventilation|guardrail|earthing|grounding|chock|banksman)|"
-    r"(?:gas\s+test(?:ing)?|testing|permit|ptw|authorization|isolation|lockout|tagout|loto|harness|fall\s+protection|ppe|fire\s+watch|standby|attendant|ventilation|guardrail)\s+(?:was\s+|were\s+)?(?:not\s+(?:done|obtained|conducted|applied|completed|issued|available|present|worn|used|carried\s+out|tested|performed))|"
-    r"not\s+wearing\s+(?:ppe|harness|helmet|gloves|safety\s+glasses|mask|respirator|protection|seat\s*belt)|"
+    r"(?:gas\s+test(?:ing)?|testing|permit|ptw|authorization|isolation|lockout|tagout|loto|harness|fall\s+protection|ppe|safety\s+glasses|fire\s+watch|standby|attendant|ventilation|guardrail)\s+(?:was\s+|were\s+)?(?:not\s+(?:done|obtained|conducted|applied|completed|issued|available|present|worn|used|carried\s+out|tested|performed))|"
+    r"not\s+wearing\s+(?:any\s+|approved\s+|proper\s+|required\s+)?(?:ppe|harness|helmet|gloves|safety\s+glasses|mask|respirator|protection|seat\s*belt)|"
     r"not\s+(?:tested|isolated|depressurized|grounded|authorized|inspected)|"
     r"entry\s+without\s+testing"
     r")\b",
@@ -184,17 +238,30 @@ def analyze_negation_context(text: str) -> Dict[str, Any]:
             "score_impact": "Risk score increased (+25 barrier penalty) and SIF potential flagged YES due to active execution without safety barrier."
         }
 
-    # 3. Preventive Stop Action Detected (Safe decision)
+    # 3. Stop Action Detected: Distinguish pre-exposure prevention vs post-exposure intervention
     if stop_match and not negated_stop_match:
         stop_phrase = stop_match.group(0)
         barrier_phrase = barrier_match.group(0) if barrier_match else "missing safety requirement"
-        return {
-            "negation_type": "SAFE_PREVENTIVE",
-            "preventive_phrase": stop_phrase,
-            "barrier_phrase": barrier_phrase,
-            "interpretation": f"Safe preventive decision: Work was proactively stopped/avoided ('{stop_phrase}') due to '{barrier_phrase}'.",
-            "score_impact": "Risk score reduced to LOW (13-20) and SIF potential nullified because proactive intervention prevented hazard exposure."
-        }
+        has_pre = bool(PRE_EXPOSURE_PREVENTION_REGEX.search(lower))
+        has_post = bool(POST_EXPOSURE_INDICATORS.search(lower))
+        has_active = bool(ACTIVE_EXPOSURE_REGEX.search(lower))
+
+        if (has_active or has_post or (barrier_match and not has_pre)) and not has_pre:
+            return {
+                "negation_type": "UNSAFE_WITH_INTERVENTION",
+                "preventive_phrase": stop_phrase,
+                "barrier_phrase": barrier_phrase,
+                "interpretation": f"Unsafe event with intervention: Active violation occurred ('{barrier_phrase}'); subsequent intervention ('{stop_phrase}') curtailed ongoing exposure.",
+                "score_impact": "Inherent risk and barrier failures retained; residual exposure reduced due to intervention."
+            }
+        else:
+            return {
+                "negation_type": "SAFE_PREVENTIVE",
+                "preventive_phrase": stop_phrase,
+                "barrier_phrase": barrier_phrase,
+                "interpretation": f"Safe preventive decision: Work was proactively stopped/avoided ('{stop_phrase}') due to '{barrier_phrase}'.",
+                "score_impact": "Risk score reduced to LOW and SIF potential nullified because proactive intervention prevented hazard exposure."
+            }
 
     # 4. Negated Barrier / Unsafe Condition without Stop Action
     if barrier_match:
@@ -279,6 +346,11 @@ def split_into_temporal_clauses(text: str) -> List[Dict[str, Any]]:
             (len(barrier_names) > 0 and neg_info["negation_type"] != "SAFE_PREVENTIVE")
         )
 
+        has_intervention = (
+            neg_info["negation_type"] == "UNSAFE_WITH_INTERVENTION" or
+            bool(PREVENTIVE_STOP_REGEX.search(cl_lower))
+        )
+
         parsed_clauses.append({
             "index": idx,
             "clause_text": clause,
@@ -289,6 +361,7 @@ def split_into_temporal_clauses(text: str) -> List[Dict[str, Any]]:
             "barrier_evidence": barriers_with_ev,
             "is_safe": is_safe,
             "is_unsafe": is_unsafe,
+            "has_intervention": has_intervention,
         })
 
     return parsed_clauses
@@ -318,8 +391,17 @@ def analyze_temporal_sequence(clauses: List[Dict[str, Any]], raw_text: str) -> D
     timeline: List[str] = []
     all_unsafe_barriers: List[str] = []
     all_unsafe_evidence: List[Dict[str, Any]] = []
+    all_clause_barriers: List[str] = []
+    all_clause_evidence: List[Dict[str, Any]] = []
 
     for c in clauses:
+        for b in c.get("barriers", []):
+            if b not in all_clause_barriers:
+                all_clause_barriers.append(b)
+        for ev in c.get("barrier_evidence", []):
+            if ev.get("barrier") not in [x["barrier"] for x in all_clause_evidence]:
+                all_clause_evidence.append(ev)
+
         if c["is_unsafe"]:
             c["state"] = "UNSAFE"
             timeline.append("UNSAFE")
@@ -335,6 +417,11 @@ def analyze_temporal_sequence(clauses: List[Dict[str, Any]], raw_text: str) -> D
         else:
             c["state"] = "NEUTRAL"
 
+    if not all_clause_barriers:
+        raw_b_ev = detect_barriers_with_evidence(raw_text)
+        all_clause_barriers = [b["barrier"] for b in raw_b_ev]
+        all_clause_evidence = raw_b_ev
+
     # Filtered active timeline (ignoring neutral statements)
     active_timeline = [s for s in timeline if s in ("SAFE", "UNSAFE")]
     if not active_timeline:
@@ -347,9 +434,10 @@ def analyze_temporal_sequence(clauses: List[Dict[str, Any]], raw_text: str) -> D
 
     has_unsafe = last_unsafe_idx != -1
     has_safe = last_safe_idx != -1
+    has_intervention = any(c.get("has_intervention") for c in clauses) or any(c.get("negation_type") == "UNSAFE_WITH_INTERVENTION" for c in clauses) or bool(PREVENTIVE_STOP_REGEX.search(raw_text))
 
-    if has_unsafe and has_safe:
-        if last_unsafe_idx > last_safe_idx:
+    if has_unsafe and (has_safe or has_intervention):
+        if last_unsafe_idx > last_safe_idx and not has_intervention:
             # e.g. SAFE -> UNSAFE or SAFE -> UNSAFE -> SAFE -> UNSAFE
             temporal_seq = "SAFE_TO_UNSAFE" if len(active_timeline) == 2 else "MULTI_STAGE_UNSAFE"
             final_state = "UNSAFE_VIOLATION"
@@ -357,12 +445,24 @@ def analyze_temporal_sequence(clauses: List[Dict[str, Any]], raw_text: str) -> D
             effective_barriers = all_unsafe_barriers
             effective_evidence = all_unsafe_evidence
         else:
-            # Final state is SAFE with explicit confirmation (e.g. UNSAFE -> SAFE)
-            temporal_seq = "UNSAFE_TO_SAFE" if len(active_timeline) == 2 else "MULTI_STAGE_SAFE_RESOLVED"
-            final_state = "SAFE_PREVENTIVE"
-            effective_neg = "SAFE_PREVENTIVE"
-            effective_barriers = all_unsafe_barriers
-            effective_evidence = all_unsafe_evidence
+            # Stop or safe action occurred after or alongside an unsafe condition.
+            # Distinguish: Pre-exposure prevention / safe completion vs Post-exposure intervention
+            has_pre = bool(PRE_EXPOSURE_PREVENTION_REGEX.search(raw_text))
+            has_post = bool(POST_EXPOSURE_INDICATORS.search(raw_text)) or bool(ACTIVE_EXPOSURE_REGEX.search(raw_text))
+
+            if has_pre and not has_post:
+                temporal_seq = "UNSAFE_TO_SAFE" if len(active_timeline) == 2 else "MULTI_STAGE_SAFE_RESOLVED"
+                final_state = "SAFE_PREVENTIVE"
+                effective_neg = "SAFE_PREVENTIVE"
+                effective_barriers = all_unsafe_barriers or all_clause_barriers
+                effective_evidence = all_unsafe_evidence or all_clause_evidence
+            else:
+                # Active breach/exposure occurred; subsequent supervisor stop/intervention curtailed residual exposure
+                temporal_seq = "UNSAFE_WITH_INTERVENTION"
+                final_state = "UNSAFE_WITH_INTERVENTION"
+                effective_neg = "UNSAFE_WITH_INTERVENTION"
+                effective_barriers = all_unsafe_barriers
+                effective_evidence = all_unsafe_evidence
     elif has_unsafe:
         temporal_seq = "PURE_UNSAFE"
         final_state = "UNSAFE_VIOLATION"
@@ -370,11 +470,12 @@ def analyze_temporal_sequence(clauses: List[Dict[str, Any]], raw_text: str) -> D
         effective_barriers = all_unsafe_barriers
         effective_evidence = all_unsafe_evidence
     elif has_safe:
-        temporal_seq = "PURE_SAFE"
+        has_pre = bool(PRE_EXPOSURE_PREVENTION_REGEX.search(raw_text))
+        temporal_seq = "PREVENTIVE_BEFORE_EXPOSURE" if has_pre else "PURE_SAFE"
         final_state = "SAFE_PREVENTIVE"
         effective_neg = "SAFE_PREVENTIVE"
-        effective_barriers = []
-        effective_evidence = []
+        effective_barriers = all_clause_barriers if has_pre else []
+        effective_evidence = all_clause_evidence if has_pre else []
     else:
         temporal_seq = "NEUTRAL"
         final_state = "NONE"
@@ -495,10 +596,15 @@ def generate_risk_reason(
     clean_barriers = [b for b in barrier_failures if b and b != "Unknown Barrier Failure" and not b.startswith("Prevented:")]
     rule_desc = lsr.lower() if lsr and lsr != "General Safety" else "operations"
 
-    if neg_type == "SAFE_PREVENTIVE":
+    if neg_type in ("SAFE_PREVENTIVE", "PREVENTIVE_BEFORE_EXPOSURE"):
         if clean_barriers:
             return f"Low risk due to proactive stop-work intervention preventing {clean_barriers[0]} during {rule_desc}."
         return f"Low risk due to proactive safety intervention avoiding hazard exposure before work began."
+
+    if neg_type == "UNSAFE_WITH_INTERVENTION":
+        if clean_barriers:
+            return f"{risk_level.capitalize()} inherent risk due to missing {clean_barriers[0]} during unsafe {rule_desc} activity; residual exposure curtailed by intervention."
+        return f"{risk_level.capitalize()} inherent risk in {rule_desc}; ongoing exposure stopped by intervention."
 
     if neg_type == "AMBIGUOUS":
         if clean_barriers:
@@ -519,7 +625,7 @@ def generate_risk_reason(
             return f"Medium risk due to potential {clean_barriers[0]} identified in {rule_desc}."
         return f"Medium risk due to moderate hazard exposure without verified critical barrier breach."
     else:
-        return f"Low risk due to routine operational conditions with no major barrier failures in {rule_desc}."
+        return f"Low risk due to routine operational conditions with no barrier failures in {rule_desc}."
 
 
 def calculate_risk_score(report: Dict) -> Dict:
@@ -541,44 +647,115 @@ def calculate_risk_score(report: Dict) -> Dict:
 
     n_barriers = len(barrier_failures)
 
-    if neg_type == "SAFE_PREVENTIVE":
+    is_high_hazard_lsr = any(a in lsr for a in ["Confined Space", "Energy Isolation", "Hot Work", "Working at Height"])
+    is_standard_lsr = lsr != "General Safety"
+
+    if neg_type in ("SAFE_PREVENTIVE", "PREVENTIVE_BEFORE_EXPOSURE"):
         # Safe preventive decision: Work was halted/avoided before exposure
-        hazard_severity = 10 if lsr != "General Safety" else 5
+        hazard_severity = 10 if is_standard_lsr else 3
         barrier_score = 0   # 0 barrier penalty: proactive stop prevented breach
-        exposure_score = 2  # exposure prevented
-        activity_score = 2
-        recurrence_score = 4
+        exposure_score = 0  # exposure avoided before entry
+        activity_score = 5 if is_high_hazard_lsr else 1
+        recurrence_score = 4 if is_standard_lsr else 2
         total = hazard_severity + barrier_score + exposure_score + activity_score + recurrence_score
         level = "LOW"
+
+    elif neg_type == "UNSAFE_WITH_INTERVENTION":
+        # Unsafe entry or breach actually occurred; supervisor intervened subsequently.
+        # Inherent hazard and barrier failures are preserved.
+        # Residual exposure is curtailed.
+        if is_high_hazard_lsr or "critical" in severity:
+            hazard_severity = 28
+        elif is_standard_lsr or "high" in severity:
+            hazard_severity = 22
+        elif "medium" in severity:
+            hazard_severity = 14
+        else:
+            hazard_severity = 8
+
+        if n_barriers == 0:
+            barrier_score = 25
+        elif n_barriers == 1:
+            barrier_score = 25
+        else:
+            barrier_score = min(35, 25 + (n_barriers - 1) * 5)
+
+        # Inherent exposure occurred, but supervisor intervention curtailed ongoing exposure
+        exposure_score = 8
+        activity_score = 10 if is_high_hazard_lsr else (6 if is_standard_lsr else 2)
+        recurrence_score = 10 if is_standard_lsr else 6
+        total = min(100, hazard_severity + barrier_score + exposure_score + activity_score + recurrence_score)
+        level = "CRITICAL" if total >= 80 else ("HIGH" if total >= 60 else ("MEDIUM" if total >= 30 else "LOW"))
+
     elif neg_type == "AMBIGUOUS":
-        hazard_severity = 18 if lsr != "General Safety" else 10
+        hazard_severity = 18 if is_standard_lsr else 10
         barrier_score = min(20, 12 + max(0, n_barriers - 1) * 4) if n_barriers > 0 else 12
         exposure_score = 10
         activity_score = 5
         recurrence_score = 5
         total = hazard_severity + barrier_score + exposure_score + activity_score + recurrence_score
         level = "MEDIUM"
+
     else:  # UNSAFE_VIOLATION or NONE
-        hazard_severity = 28 if (lsr != "General Safety" or "critical" in severity) else (
-            22 if "high" in severity else (14 if "medium" in severity else 6)
-        )
-        # Multi-barrier penalty: 25 for first barrier, +5 for each additional barrier, capped at 35
+        has_critical_sev = "critical" in severity
+        has_high_sev = "high" in severity
+        has_med_sev = "medium" in severity
+        has_low_sev = "low" in severity or "minor" in severity
+
+        # 1. Hazard Severity (0-30)
+        if is_high_hazard_lsr or has_critical_sev:
+            hazard_severity = 28
+        elif is_standard_lsr or has_high_sev:
+            hazard_severity = 22
+        elif has_med_sev:
+            hazard_severity = 14
+        elif has_low_sev:
+            hazard_severity = 2
+        else:
+            # Routine General Safety with no severity descriptor
+            hazard_severity = 3
+
+        # 2. Barrier Failure (0-35)
         if n_barriers == 0:
-            barrier_score = 25 if neg_type == "UNSAFE_VIOLATION" else 5
+            barrier_score = 25 if neg_type == "UNSAFE_VIOLATION" else 0
         elif n_barriers == 1:
             barrier_score = 25
         else:
             barrier_score = min(35, 25 + (n_barriers - 1) * 5)
 
-        exposure_score = 20 if any(w in lower for w in ["two worker", "crew", "multiple"]) else (
-            16 if any(w in lower for w in ["worker", "technician", "operator"]) else 8
-        )
-        activity_score = 10 if any(a in lsr for a in ["Confined Space", "Energy Isolation", "Hot Work", "Working at Height"]) else 5
-        recurrence_score = 15 if "incident" in report_type else (
-            12 if "near miss" in report_type else (10 if "unsafe act" in report_type else 8)
-        )
+        # 3. Exposure (0-20)
+        no_exposure_match = EXPOSURE_ABSENT_OR_PREVENTED_REGEX.search(lower)
+        if no_exposure_match and neg_type != "UNSAFE_VIOLATION":
+            exposure_score = 0
+        elif any(w in lower for w in ["two worker", "crew", "multiple workers", "team", "contract workers"]):
+            exposure_score = 20
+        elif any(w in lower for w in ["worker", "technician", "operator", "electrician", "welder", "contractor"]) and (is_standard_lsr or neg_type == "UNSAFE_VIOLATION"):
+            exposure_score = 16
+        elif any(w in lower for w in ["worker", "technician", "operator", "employee"]):
+            exposure_score = 4
+        else:
+            exposure_score = 2
+
+        # 4. Activity Criticality (0-10)
+        if is_high_hazard_lsr:
+            activity_score = 10
+        elif is_standard_lsr:
+            activity_score = 6
+        else:
+            activity_score = 1
+
+        # 5. Recurrence Weight (0-15)
+        if "incident" in report_type:
+            recurrence_score = 15
+        elif "near miss" in report_type:
+            recurrence_score = 8 if is_standard_lsr else 3
+        elif "unsafe act" in report_type or neg_type == "UNSAFE_VIOLATION":
+            recurrence_score = 10 if is_standard_lsr else 5
+        else:
+            recurrence_score = 6 if is_standard_lsr else 2
+
         total = min(100, hazard_severity + barrier_score + exposure_score + activity_score + recurrence_score)
-        level = "CRITICAL" if total > 80 else ("HIGH" if total > 60 else ("MEDIUM" if total > 30 else "LOW"))
+        level = "CRITICAL" if total >= 80 else ("HIGH" if total >= 60 else ("MEDIUM" if total >= 30 else "LOW"))
 
     risk_reason = generate_risk_reason(total, level, lsr, barrier_failures, neg_type, text)
 
@@ -718,7 +895,16 @@ def analyze_report(report: Dict) -> Dict:
         normalization_applied = norm_result["normalization_applied"]
 
         # Step 8: SIF Potential & Explanations
-        if neg_type == "SAFE_PREVENTIVE":
+        sif_keywords = [
+            "confined space", "without gas testing", "lockout", "without isolation",
+            "energized", "live circuit", "without harness", "suspended load", "line of fire",
+            "chemical exposure", "toxic", "oxygen deficient", "pressurized", "no standby"
+        ]
+        has_sif_precursor = any(k in text.lower() for k in sif_keywords) or (
+            lsr in ("Confined Space", "Energy Isolation", "Working at Height", "Line of Fire") and len(barrier_failures) > 0
+        )
+
+        if neg_type in ("SAFE_PREVENTIVE", "PREVENTIVE_BEFORE_EXPOSURE") or temporal_sequence in ("PURE_SAFE", "PREVENTIVE_BEFORE_EXPOSURE", "UNSAFE_TO_SAFE"):
             sif_potential = "NO"
             prevented_barriers = [f"Prevented: {b}" for b in barrier_failures] if barrier_failures else ["Safely Controlled"]
             explanation = (
@@ -734,6 +920,23 @@ def analyze_report(report: Dict) -> Dict:
                 "Verify pre-entry and isolation checklists are formally signed off.",
                 "Brief the crew on safe work procedures prior to resumption."
             ]
+        elif neg_type == "UNSAFE_WITH_INTERVENTION" or temporal_sequence == "UNSAFE_WITH_INTERVENTION":
+            sif_potential = "YES" if (has_sif_precursor or score >= 70) else ("NO" if score <= 30 else "UNKNOWN")
+            barrier_list_str = ", ".join(barrier_failures) if barrier_failures else "Critical barrier failure"
+            explanation = (
+                f"INHERENT RISK DETECTED WITH SUBSEQUENT INTERVENTION: {lsr} violation occurred with active exposure. "
+                f"{barrier_list_str} remains a barrier failure. "
+                f"Supervisor/management intervention stopped ongoing work and reduced residual exposure, "
+                f"but the original unsafe event remains a significant safety finding (SIF Potential: {sif_potential}). "
+                f"Timeline: {' -> '.join(temporal_timeline)}. Inherent Risk: {level} ({score}/100)."
+            )
+            display_barriers = barrier_failures if barrier_failures else ["Unknown Barrier Failure"]
+            recommended_actions = [
+                "Maintain work stoppage until full incident investigation is completed.",
+                "Re-verify all required barrier controls and permits prior to resumption.",
+                "Conduct supervisor debrief on Life-Saving Rules compliance.",
+                "Inspect work area to ensure safe atmospheric and mechanical conditions."
+            ]
         elif neg_type == "AMBIGUOUS" or analysis_quality == "LOW":
             sif_potential = "UNKNOWN"
             explanation = (
@@ -748,12 +951,27 @@ def analyze_report(report: Dict) -> Dict:
                 "Clarify if personnel were exposed before work was stopped.",
                 "Ensure permit and safety controls are strictly validated before proceeding."
             ]
+        elif level == "LOW" and not barrier_failures:
+            sif_potential = "NO"
+            explanation = (
+                f"ROUTINE OBSERVATION / LOW RISK: Routine observation under {lsr} with no barrier failures or active hazard exposure. "
+                f"Risk score evaluated at {score}/100 ({level}) with SIF potential: {sif_potential}. "
+                f"System Confidence: {system_confidence} ({system_confidence_score}). Quality: {analysis_quality}."
+            )
+            display_barriers = []
+            recommended_actions = [
+                "Continue routine operations and maintain standard workplace housekeeping.",
+                "Acknowledge proactive reporting."
+            ]
         else:
-            sif_keywords = ["confined space", "without gas testing", "lockout", "without isolation",
-                            "energized", "without harness", "suspended load", "line of fire",
-                            "chemical exposure", "oxygen deficient", "pressurized", "no permit", "not wearing", "no standby"]
-            has_sif = any(k in text.lower() for k in sif_keywords)
-            sif_potential = "YES" if (has_sif or score >= 70) else ("NO" if score <= 30 else "UNKNOWN")
+            if has_sif_precursor and (len(barrier_failures) > 0 or "without" in text.lower() or "no " in text.lower()):
+                sif_potential = "YES"
+            elif score >= 80:
+                sif_potential = "YES"
+            elif score <= 30 or (lsr == "General Safety" and not has_sif_precursor):
+                sif_potential = "NO"
+            else:
+                sif_potential = "UNKNOWN"
 
             barrier_summary = f"{len(barrier_failures)} barrier failure(s) detected: {', '.join(barrier_failures)}" if barrier_failures else "Unknown Barrier Failure"
             explanation = (
@@ -762,7 +980,7 @@ def analyze_report(report: Dict) -> Dict:
                 f"Risk score {score}/100 ({level}) increased due to missing safety controls during active work. SIF Potential: {sif_potential}. "
                 f"System Confidence: {system_confidence} ({system_confidence_score}). Quality: {analysis_quality}."
             )
-            display_barriers = barrier_failures if barrier_failures else ["Unknown Barrier Failure"]
+            display_barriers = barrier_failures if barrier_failures else (["Unknown Barrier Failure"] if score > 30 else [])
             recommended_actions = [
                 "Stop work immediately.",
                 "Apply all required barrier controls and obtain necessary permits.",
@@ -781,7 +999,7 @@ def analyze_report(report: Dict) -> Dict:
             "risk_level": level,
             "risk_reason": risk_data.get("risk_reason") or generate_risk_reason(score, level, lsr, display_barriers, neg_type, text),
             "barrier_failures": display_barriers,
-            "barrier_failure": display_barriers[0] if display_barriers else "Unknown Barrier Failure",  # backward compat
+            "barrier_failure": display_barriers[0] if display_barriers else None,
             "barrier_evidence": barrier_evidence,
             "confidence": confidence,
             "confidence_level": confidence_level,

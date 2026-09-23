@@ -380,17 +380,26 @@ def validate_analysis_output(result: Dict[str, Any], raw_text: str = "") -> Dict
             for b in barriers:
                 if isinstance(b, str) and b.strip() and b.strip() not in cleaned:
                     cleaned.append(b.strip())
-            result["barrier_failures"] = cleaned if cleaned else ["Unknown Barrier Failure"]
+            if not cleaned:
+                if clamped_score > 30 and result.get("negation_type") in ("UNSAFE_VIOLATION", "PURE_UNSAFE"):
+                    result["barrier_failures"] = ["Unknown Barrier Failure"]
+                else:
+                    result["barrier_failures"] = []
+            else:
+                result["barrier_failures"] = cleaned
         else:
-            result["barrier_failures"] = ["Unknown Barrier Failure"]
+            result["barrier_failures"] = ["Unknown Barrier Failure"] if clamped_score > 30 else []
 
-        result["barrier_failure"] = result["barrier_failures"][0]
+        result["barrier_failure"] = result["barrier_failures"][0] if result["barrier_failures"] else None
 
         # 6. Risk Reason Justification
         if not result.get("risk_reason"):
             lvl = result["risk_level"]
-            primary_b = result["barrier_failures"][0]
-            result["risk_reason"] = f"{lvl.capitalize()} risk due to {primary_b} in {lsr} operations."
+            if result["barrier_failures"]:
+                primary_b = result["barrier_failures"][0]
+                result["risk_reason"] = f"{lvl.capitalize()} risk due to {primary_b} in {lsr} operations."
+            else:
+                result["risk_reason"] = f"{lvl.capitalize()} risk due to routine operations with no barrier failure in {lsr}."
 
         # 7. SIF Potential Validation
         sif = str(result.get("sif_potential", "NO")).upper()
