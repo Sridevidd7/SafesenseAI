@@ -1,33 +1,33 @@
 """
-schemas.py — Pydantic v2 schemas for request validation and response serialization.
+schemas.py â€” Pydantic v2 schemas for request validation and response serialization.
 
 Separation of concerns:
-  ReportCreate   → validates incoming POST body
-  ReportResponse → shapes the API response (never exposes ORM internals)
+  ReportCreate   â†’ validates incoming POST body
+  ReportResponse â†’ shapes the API response (never exposes ORM internals)
 """
 from datetime import datetime
 from typing import Any
 from pydantic import BaseModel, Field, ConfigDict
 
 
-# ─── Request schemas ──────────────────────────────────────────────────────────
+# â”€â”€â”€ Request schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class ReportCreate(BaseModel):
     """
     Body expected by POST /reports.
-    Only description is required from the caller —
+    Only description is required from the caller â€”
     category and risk_score are computed by the service layer.
     """
     description: str = Field(
         ...,
         min_length=10,
         max_length=5000,
-        description="Full text of the safety observation (10–5000 characters)",
+        description="Full text of the safety observation (10â€“5000 characters)",
         examples=["Worker entered confined space without completing gas testing."],
     )
 
 
-# ─── Metadata & Response Envelope schemas ────────────────────────────────────
+# â”€â”€â”€ Metadata & Response Envelope schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class MetaInfo(BaseModel):
     total_reports: int = 0
@@ -40,7 +40,7 @@ class GenericResponse(BaseModel):
     meta: MetaInfo
 
 
-# ─── Response schemas ─────────────────────────────────────────────────────────
+# â”€â”€â”€ Response schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class ReportResponse(BaseModel):
     """
@@ -58,7 +58,13 @@ class ReportResponse(BaseModel):
     risk_level:    str
     risk_reason:   str | None = None
     site:          str = "Site Alpha"
+    unit:          str = "Not Specified"
+    area:          str = "Not Specified"
     activity:      str = "General Operation"
+    barrier_failure: str = "Unspecified"
+    pii_detected:  bool = False
+    pii_count:     int = 0
+    pii_types:     str = ""
     date:          str | None = None
     created_at:    datetime | None = None
     data:          dict[str, Any] | None = None
@@ -82,7 +88,7 @@ class ReportListResponse(BaseModel):
     meta:    MetaInfo | None = None
 
 
-# ─── CSV Upload schemas ───────────────────────────────────────────────────────
+# â”€â”€â”€ CSV Upload schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class ProcessedRowSchema(BaseModel):
     """One row from the CSV upload, after analysis and DB save."""
@@ -91,16 +97,22 @@ class ProcessedRowSchema(BaseModel):
     report_id:     str    = Field(default="", description="Unique identifier for report")
     description:   str
     category:      str    = Field(description="Life-Saving Rule category detected")
-    risk_score:    int    = Field(description="Risk score 0–100")
+    risk_score:    int    = Field(description="Risk score 0â€“100")
     risk_level:    str    = Field(description="LOW | MEDIUM | HIGH | CRITICAL")
     risk_reason:   str | None = Field(default=None, description="Short explanation of WHY score is high/low")
     sif_potential: str    = Field(description="YES | NO")
     site:          str    = Field(default="Site Alpha", description="Facility or site name")
+    unit:          str    = Field(default="Not Specified", description="Unit or operating plant")
+    area:          str    = Field(default="Not Specified", description="Area or specific zone")
     activity:      str    = Field(default="General Operation", description="Activity or task name")
+    barrier_failure: str  = Field(default="Unspecified", description="Barrier failure identified")
+    pii_detected:  bool   = Field(default=False, description="Whether PII was detected and redacted")
+    pii_count:     int    = Field(default=0, description="Count of PII identifiers redacted")
+    pii_types:     str    = Field(default="", description="Comma-separated PII identifier categories")
     date:          str | None = None
 
 
-# ─── Analytics & Pattern schemas ──────────────────────────────────────────────
+# â”€â”€â”€ Analytics & Pattern schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class PatternItem(BaseModel):
     category:     str
@@ -152,6 +164,41 @@ class DebugCountResponse(BaseModel):
     with_activity: int
 
 
+# â”€â”€â”€ SIF Risk Concentration Heatmap schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+class SifHeatmapNode(BaseModel):
+    id:                 str
+    name:               str
+    level:              str   # 'site' | 'unit' | 'area' | 'activity' | 'lsr' | 'barrier'
+    total_reports:      int = 0
+    sif_count:          int = 0
+    precursor_density:  float = 0.0
+    risk_level:         str = "LOW"  # HIGH | EMERGING | MEDIUM | LOW
+    avg_risk_score:     float = 0.0
+    trend_pct:          float | None = None
+    trend_label:        str = "Insufficient data"
+    top_barrier:        str = "Unspecified"
+    is_fallback:        bool = False
+    report_ids:         list[str] = Field(default_factory=list)
+    children:           list["SifHeatmapNode"] = Field(default_factory=list)
+
+
+class SifHeatmapSummary(BaseModel):
+    total_reports:            int = 0
+    total_precursors:         int = 0
+    overall_density:          float = 0.0
+    high_risk_concentrations: int = 0
+    emerging_concentrations:  int = 0
+    top_concentration:        str = "None detected"
+
+
+class SifHeatmapResponse(BaseModel):
+    summary:    SifHeatmapSummary
+    tree:       list[SifHeatmapNode]
+    reports:    list[ReportResponse] = Field(default_factory=list)
+    meta:       MetaInfo | None = None
+
+
 class UploadResponse(BaseModel):
     """
     Returned by POST /api/reports/upload after processing a full CSV file.
@@ -170,15 +217,17 @@ class UploadResponse(BaseModel):
     sample:             list[dict] = Field(default_factory=list, description="First 5 processed rows")
     risk_summary:       dict[str, int] = Field(default_factory=dict, description="Count per risk level")
     sif_count:          int  = Field(default=0, description="Number of rows classified as SIF potential YES")
+    pii_detected_count: int  = Field(default=0, description="Number of uploaded rows with PII redacted")
+    pii_total_redacted: int  = Field(default=0, description="Total number of PII items sanitized")
     description_column: str  = Field(default="", description="Column name used as 'description'")
 
 
-# ─── Dashboard schemas ────────────────────────────────────────────────────────
+# â”€â”€â”€ Dashboard schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class DashboardResponse(BaseModel):
     """
     Returned by GET /api/dashboard/stats and /api/dashboard/summary.
-    All values are computed live from the reports table — no hardcoded data.
+    All values are computed live from the reports table â€” no hardcoded data.
     """
     total_reports:         int   = Field(description="Total rows in the reports table")
     sif_count:             int   = Field(description="Reports classified as SIF potential YES")
@@ -199,7 +248,7 @@ class DashboardResponse(BaseModel):
     meta:                  MetaInfo | None = Field(default=None, description="Metadata with total count, source, timestamp")
 
 
-# ─── Risk Intelligence Trends schema ─────────────────────────────────────────
+# â”€â”€â”€ Risk Intelligence Trends schema â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class TrendPoint(BaseModel):
     """
@@ -211,7 +260,7 @@ class TrendPoint(BaseModel):
     critical: int = Field(description="Critical severity reports in this month")
 
 
-# ─── Corrective Action schemas ────────────────────────────────────────────────
+# â”€â”€â”€ Corrective Action schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class ActionCreate(BaseModel):
     """
@@ -250,7 +299,7 @@ class ActionResponse(BaseModel):
     created_at:  datetime | None = None
 
 
-# ─── Human Review (HITL) schemas ──────────────────────────────────────────────
+# â”€â”€â”€ Human Review (HITL) schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class ReviewCreate(BaseModel):
     """
@@ -275,3 +324,21 @@ class ReviewResponse(BaseModel):
     reviewer:   str
     created_at: datetime
 
+
+# â”€â”€â”€ Copilot schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+class CopilotHistoryMessage(BaseModel):
+    role: str = Field(..., description="'user' or 'assistant'")
+    content: str = Field(..., description="Message text")
+
+
+class CopilotChatRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=4000, description="User's natural language question")
+    history: list[CopilotHistoryMessage] | None = Field(default=None, description="Optional conversation history")
+
+
+class CopilotChatResponse(BaseModel):
+    answer: str = Field(..., description="Grounded natural-language answer synthesized by the LLM")
+    source_reports: list[str] = Field(default_factory=list, description="IDs of reports retrieved from SQLite and used as context")
+    data_source: str = Field("SQLite", description="Underlying database source")
+    model: str = Field(..., description="Model identifier used to generate the answer")

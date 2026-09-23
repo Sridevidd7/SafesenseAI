@@ -26,14 +26,20 @@ class Report(Base):
     __tablename__ = "reports"
 
     report_id     = Column(String(64),    primary_key=True, index=True)
-    content_hash  = Column(String(64),    unique=True, index=True, nullable=True)
+    content_hash  = Column(String(64),    unique=True, nullable=True)
     description   = Column(Text,          nullable=False)
     category      = Column(String(100),   nullable=False, default="General Safety")
     risk_level    = Column(String(10),    nullable=False, default="LOW")
     risk_score    = Column(Integer,       nullable=False, default=0)
     sif_potential = Column(String(3),     nullable=False, default="NO")
     site          = Column(String(100),   nullable=False, default="Site Alpha")
+    unit          = Column(String(100),   nullable=False, default="Not Specified")
+    area          = Column(String(100),   nullable=False, default="Not Specified")
     activity      = Column(String(100),   nullable=False, default="General Operation")
+    barrier_failure = Column(String(100), nullable=True,  default="Unspecified")
+    pii_detected  = Column(Integer,       nullable=False, default=0)
+    pii_count     = Column(Integer,       nullable=False, default=0)
+    pii_types     = Column(String(255),   nullable=True,  default="")
     date          = Column(String(50),    nullable=True, index=True)
     created_at    = Column(
         DateTime,
@@ -52,7 +58,10 @@ class Report(Base):
         Index("ix_reports_sif_potential", "sif_potential"),
         Index("ix_reports_category",      "category"),
         Index("ix_reports_site",          "site"),
+        Index("ix_reports_unit",          "unit"),
+        Index("ix_reports_area",          "area"),
         Index("ix_reports_activity",      "activity"),
+        Index("ix_reports_barrier",       "barrier_failure"),
         Index("ix_reports_content_hash",  "content_hash", unique=True),
     )
 

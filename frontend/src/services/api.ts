@@ -1,14 +1,16 @@
 /**
- * api.ts — Typed HTTP client for the SafeSense AI FastAPI backend.
+ * api.ts â€” Typed HTTP client for the SafeSense AI FastAPI backend.
  *
  * All calls go through the Vite dev-server proxy:
- *   /api/* → http://localhost:8000/api/*
+ *   /api/* â†’ http://localhost:8000/api/*
  *
  * No mock data. No hardcoded values. Every function returns typed data
  * from the real backend.
  */
 
-// ─── Response types (mirror backend Pydantic schemas) ────────────────────────
+import { SifHeatmapResponse, SifHeatmapFilter } from '../types';
+
+// â”€â”€â”€ Response types (mirror backend Pydantic schemas) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface DashboardStats {
   total_reports:         number;
@@ -40,7 +42,13 @@ export interface ApiReport {
   sif_potential: string;   // "YES" | "NO"
   risk_level:    string;   // "LOW" | "MEDIUM" | "HIGH" | "CRITICAL"
   site?:         string;
+  unit?:         string;
+  area?:         string;
   activity?:     string;
+  barrier_failure?: string;
+  pii_detected?: boolean;
+  pii_count?:    number;
+  pii_types?:    string[];
   date?:         string | null;
   created_at?:   string | null;
 }
@@ -63,6 +71,7 @@ export interface UploadResult {
   skipped?:           number;
   skipped_reasons?:   string[];
   sif_count?:         number;
+  pii_detected_count?: number;
   risk_summary?:      Record<string, number>;
   description_column?: string;
   sample?: Array<{
@@ -80,7 +89,7 @@ export interface UploadResult {
   }>;
 }
 
-// ─── Base fetch wrapper ───────────────────────────────────────────────────────
+// â”€â”€â”€ Base fetch wrapper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function getAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -111,7 +120,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
       const body = await res.json();
       detail = body.detail ?? detail;
     } catch {
-      // ignore parse error — use status code message
+      // ignore parse error â€” use status code message
     }
     throw new Error(detail);
   }
@@ -124,7 +133,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return json as T;
 }
 
-// ─── Dashboard ────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Dashboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * GET /api/dashboard/stats or /api/dashboard/summary
@@ -192,7 +201,7 @@ export async function refreshAnalytics(): Promise<{ status: string; total_report
   });
 }
 
-// ─── Reports ─────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Reports â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface FetchReportsParams {
   search?:     string;
@@ -274,7 +283,7 @@ export async function createReport(description: string): Promise<ApiReport> {
   });
 }
 
-// ─── CSV Upload ───────────────────────────────────────────────────────────────
+// â”€â”€â”€ CSV Upload â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * POST /api/reports/upload
@@ -317,7 +326,7 @@ export async function uploadReportsCSV(file: File): Promise<UploadResult> {
   return json as UploadResult;
 }
 
-// ─── Corrective Actions ───────────────────────────────────────────────────────
+// â”€â”€â”€ Corrective Actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface ActionItem {
   id:          number;
@@ -383,7 +392,7 @@ export async function updateAction(id: number, payload: UpdateActionPayload): Pr
   });
 }
 
-// ─── Human-in-the-Loop (HITL) Reviews ─────────────────────────────────────────
+// â”€â”€â”€ Human-in-the-Loop (HITL) Reviews â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface ReviewItem {
   id:         number;
@@ -420,7 +429,7 @@ export async function createReview(payload: CreateReviewPayload): Promise<Review
   });
 }
 
-// ─── LLM Explanation & Observability ──────────────────────────────────────────
+// â”€â”€â”€ LLM Explanation & Observability â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface LlmExplanationResponse {
   root_cause:           string;
@@ -449,7 +458,7 @@ export async function fetchReportExplanation(reportId?: string | number, reportD
   });
 }
 
-// ─── Analytics, Patterns, Sites & Command Center ──────────────────────────────
+// â”€â”€â”€ Analytics, Patterns, Sites & Command Center â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface AIInsight {
   type:        'RECURRING_PATTERN' | 'ANOMALY' | 'CROSS_SITE_RISK' | 'TREND' | string;
@@ -544,3 +553,48 @@ export async function fetchDebugCounts(): Promise<DebugCounts> {
   return apiFetch<DebugCounts>('/debug/count');
 }
 
+/**
+ * GET /api/analytics/sif-heatmap
+ * Fetches operational SIF risk concentration tree and reports from SQLite.
+ */
+export async function fetchSifHeatmap(filter?: SifHeatmapFilter): Promise<SifHeatmapResponse> {
+  const query = new URLSearchParams();
+  if (filter?.site) query.set('site', filter.site);
+  if (filter?.unit) query.set('unit', filter.unit);
+  if (filter?.area) query.set('area', filter.area);
+  if (filter?.activity) query.set('activity', filter.activity);
+  if (filter?.lsr) query.set('lsr', filter.lsr);
+  if (filter?.barrier) query.set('barrier', filter.barrier);
+  const qs = query.toString() ? `?${query.toString()}` : '';
+  return apiFetch<SifHeatmapResponse>(`/analytics/sif-heatmap${qs}`);
+}
+
+// â”€â”€â”€ Safety Copilot â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+export interface CopilotHistoryMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface CopilotChatPayload {
+  message: string;
+  history?: CopilotHistoryMessage[];
+}
+
+export interface CopilotChatResponse {
+  answer: string;
+  source_reports: string[];
+  data_source: string;
+  model: string;
+}
+
+/**
+ * POST /api/copilot/chat
+ * Sends user question to backend Safety Copilot grounded on SQLite + Groq.
+ */
+export async function sendCopilotMessage(payload: CopilotChatPayload): Promise<CopilotChatResponse> {
+  return apiFetch<CopilotChatResponse>('/copilot/chat', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}

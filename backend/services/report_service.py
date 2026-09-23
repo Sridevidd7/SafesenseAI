@@ -148,15 +148,26 @@ def insert_report(
     """
     raw_dict: dict[str, Any] = data.dict() if hasattr(data, "dict") else dict(data)
     
-    description = normalize_text(raw_dict.get("description") or raw_dict.get("report_text") or "")
-    if len(description) < 5:
+    raw_desc = normalize_text(raw_dict.get("description") or raw_dict.get("report_text") or "")
+    if len(raw_desc) < 5:
         raise ValueError("Report description must be at least 5 characters.")
+
+    # ── PII Preprocessing BEFORE NLP / Risk Engine ──
+    from services.pii_service import redact_pii
+    pii_res = redact_pii(raw_desc)
+    description = pii_res.redacted_text
 
     raw_date = raw_dict.get("date") or raw_dict.get("incident_date") or ""
     date_val = normalize_date(raw_date)
 
     raw_site = raw_dict.get("site") or raw_dict.get("location") or ""
     site_val = normalize_text(raw_site) if raw_site else "Site Alpha"
+
+    raw_unit = raw_dict.get("unit") or ""
+    unit_val = normalize_text(raw_unit) if raw_unit else "Not Specified"
+
+    raw_area = raw_dict.get("area") or ""
+    area_val = normalize_text(raw_area) if raw_area else "Not Specified"
 
     raw_activity = raw_dict.get("activity") or raw_dict.get("task") or ""
     activity_val = normalize_text(raw_activity) if raw_activity else "General Operation"
@@ -180,7 +191,7 @@ def insert_report(
         )
         return existing, False
 
-    # Run analysis
+    # Run analysis on SANITIZED description
     analysis = analyze_text(description)
     user_cat = raw_dict.get("category") or raw_dict.get("report_type")
     effective_category = str(user_cat).strip() if user_cat else analysis["category"]
@@ -188,19 +199,28 @@ def insert_report(
     user_sev = str(raw_dict.get("severity") or raw_dict.get("risk_level") or "").strip().upper()
     effective_level = user_sev if user_sev in ("CRITICAL", "HIGH", "MEDIUM", "LOW") else analysis["risk_level"]
 
+    raw_barrier = raw_dict.get("barrier_failure") or raw_dict.get("barrier") or ""
+    barrier_val = normalize_text(raw_barrier) if raw_barrier else (analysis.get("barrier") or "Unspecified")
+
     now = datetime.now(timezone.utc)
     new_report = Report(
-        report_id     = r_id,
-        content_hash  = c_hash,
-        description   = description,
-        category      = effective_category,
-        risk_score    = analysis["risk_score"],
-        sif_potential = analysis["sif_potential"],
-        risk_level    = effective_level,
-        site          = site_val,
-        activity      = activity_val,
-        date          = date_val,
-        created_at    = now,
+        report_id       = r_id,
+        content_hash    = c_hash,
+        description     = description,
+        category        = effective_category,
+        risk_score      = analysis["risk_score"],
+        sif_potential   = analysis["sif_potential"],
+        risk_level      = effective_level,
+        site            = site_val,
+        unit            = unit_val,
+        area            = area_val,
+        activity        = activity_val,
+        barrier_failure = barrier_val,
+        pii_detected    = 1 if pii_res.pii_detected else 0,
+        pii_count       = pii_res.pii_count,
+        pii_types       = ", ".join(pii_res.pii_types),
+        date            = date_val,
+        created_at      = now,
     )
 
     db.add(new_report)

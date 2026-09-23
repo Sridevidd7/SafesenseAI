@@ -35,6 +35,7 @@ from routes.dashboard import router as dashboard_router
 from routes.actions   import router as actions_router
 from routes.reviews   import router as reviews_router
 from routes.admin     import router as admin_router
+from routes.copilot   import router as copilot_router
 
 # ─── App ──────────────────────────────────────────────────────────────────────
 app = FastAPI(
@@ -69,6 +70,7 @@ app.include_router(dashboard_router, prefix="/api")
 app.include_router(actions_router,   prefix="/api")
 app.include_router(reviews_router,   prefix="/api")
 app.include_router(admin_router,     prefix="/api")
+app.include_router(copilot_router,   prefix="/api")
 
 # Mount direct endpoints (without /api prefix) for direct client requests
 app.include_router(reports_router)
@@ -76,6 +78,7 @@ app.include_router(dashboard_router)
 app.include_router(actions_router)
 app.include_router(reviews_router)
 app.include_router(admin_router)
+app.include_router(copilot_router)
 
 # ─── Auth ─────────────────────────────────────────────────────────────────────
 DEMO_USERS = {
@@ -127,6 +130,8 @@ async def direct_upload_file(
         sample=result.sample,
         risk_summary=result.risk_summary,
         sif_count=result.sif_count,
+        pii_detected_count=result.pii_detected_count,
+        pii_total_redacted=result.pii_total_redacted,
         description_column=result.description_column,
     )
 
@@ -149,8 +154,18 @@ async def analyze_single_report(req: AnalyzeRequest):
     raw_text = (data.get("report_text") or "").strip()
     if not raw_text or len(raw_text) < 10:
         raise HTTPException(status_code=400, detail="Please provide a detailed safety observation.")
-    data["report_text"] = raw_text
+
+    # ── PII Preprocessing BEFORE NLP / Risk Engine ──
+    from services.pii_service import redact_pii
+    pii_res = redact_pii(raw_text)
+    data["report_text"] = pii_res.redacted_text
+    data["description"] = pii_res.redacted_text
+
     result = analyze_report(data)
+    result["pii_detected"] = pii_res.pii_detected
+    result["pii_count"] = pii_res.pii_count
+    result["pii_types"] = pii_res.pii_types
+    result["redacted_text"] = pii_res.redacted_text
     return result
 
 

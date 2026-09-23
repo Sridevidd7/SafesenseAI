@@ -1,8 +1,13 @@
-description,severity,report_type,site,activity,date
-Worker noticed missing gas test kit and proactively halted tank entry until atmospheric testing was completed.,Low,Near Miss,Site Alpha,Confined Space Pre-entry,2026-03-01
-Housekeeping audit in workshop noted safety glasses not worn during light material handling.,Medium,Unsafe Act,Site Alpha,Workshop Fabrication,2026-03-02
-Technician entered reactor vessel without permit and oxygen levels were not tested before entry.,Critical,Near Miss,Site Beta,Reactor Inspection,2026-03-03
-Pump maintenance team conducted motor overhaul without applying lockout tagout or energy isolation.,Critical,Unsafe Act,Site Alpha,Pump Maintenance,2026-03-04
-Secondary pump replacement initiated at transfer station without lockout tagout energy isolation.,Critical,Unsafe Act,Site Beta,Pump Overhaul,2026-03-05
-Emergency pump repair started on pipeline without applying lockout tagout isolation.,High,Unsafe Act,Site Gamma,Pipeline Maintenance,2026-03-06
-maybe unsafe conditions near electrical panel, not sure if safe or if breaker was isolated.,Medium,Unsafe Condition,Site Delta,Electrical Substation,2026-03-07
+description,severity,report_type,site,unit,area,activity,barrier_failure,date
+Worker noticed missing gas test kit and proactively halted tank entry until atmospheric testing was completed.,Low,Near Miss,Site Alpha,Refinery Unit 1,Storage Yard,Confined Space Pre-entry,Gas Testing Verification,2026-02-05
+Technician noted uncertified ladder in workshop and replaced it before work commenced.,Low,Near Miss,Site Alpha,Fabrication Unit,Workshop 1,Scaffolding Inspection,Fall Protection,2026-02-10
+Operator identified leaking flange on fuel transfer manifold and tagged out line.,Medium,Near Miss,Site Beta,Transfer Terminal,Pump Bay A,Transfer Manifold Inspection,Energy Isolation,2026-02-15
+Technician performed valve grease service without verifying line pressure release.,High,Unsafe Act,Site Alpha,Refinery Unit 2,Compressor Area,Pump Maintenance,Pressure Isolation,2026-02-20
+Housekeeping audit in workshop noted safety glasses not worn during light material handling.,Medium,Unsafe Act,Site Alpha,Fabrication Unit,Workshop 3,Workshop Fabrication,PPE Compliance,2026-03-02
+Technician entered reactor vessel without permit and oxygen levels were not tested before entry.,Critical,Near Miss,Site Beta,Refinery Unit 2,Reactor Area,Reactor Inspection,Permit to Work Not Obtained,2026-03-03
+Pump maintenance team conducted motor overhaul without applying lockout tagout or energy isolation.,Critical,Unsafe Act,Site Alpha,Refinery Unit 2,Compressor Area,Pump Maintenance,Energy Isolation Not Applied,2026-03-04
+Secondary pump replacement initiated at transfer station without lockout tagout energy isolation.,Critical,Unsafe Act,Site Beta,Transfer Terminal,Pump Bay B,Pump Overhaul,Energy Isolation Not Applied,2026-03-05
+Emergency pump repair started on pipeline without applying lockout tagout isolation.,High,Unsafe Act,Site Gamma,Pipeline Grid,Manifold Section,Pipeline Maintenance,Energy Isolation Not Applied,2026-03-06
+"maybe unsafe conditions near electrical panel, not sure if safe or if breaker was isolated.",Medium,Unsafe Condition,Site Delta,Substation Unit 4,Switchgear Room,Electrical Substation,Electrical Isolation Uncertainty,2026-03-07
+Demo Worker Jane Doe (Employee ID DEMO-12345) called 555-0199 to report missing lockout on pump transfer line.,High,Unsafe Act,Site Alpha,Refinery Unit 2,Compressor Area,Pump Maintenance,Energy Isolation Not Applied,2026-03-08
+Scaffolders observed working on upper deck without securing safety harness lanyards.,Critical,Unsafe Act,Site Alpha,Refinery Unit 2,Compressor Area,Scaffolding Erection,Fall Arrest Not Secured,2026-03-09

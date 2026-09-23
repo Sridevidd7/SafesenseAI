@@ -15,6 +15,7 @@ import {
   AlertTriangle, TrendingUp, Shield, Activity, Zap, RefreshCw, Database, CheckCircle,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import SifRiskHeatmap from '../components/SifRiskHeatmap';
 
 // ─── Colour maps ──────────────────────────────────────────────────────────────
 const RISK_COLORS: Record<string, string> = {
@@ -276,6 +277,9 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* Operational SIF Risk Concentration Explorer (Multi-Tier Heatmap) */}
+      <SifRiskHeatmap />
 
       {/* Charts row */}
       <div className="grid lg:grid-cols-2 gap-6">

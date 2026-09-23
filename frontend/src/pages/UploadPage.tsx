@@ -18,7 +18,7 @@ import { useState, useRef, useCallback } from 'react';
 import {
   Upload, X, CheckCircle, AlertCircle, Eye,
   ChevronLeft, ChevronRight, Search, ArrowUpDown,
-  Server, Languages,
+  Server, Languages, Shield,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { detectColumnMapping, analyzeDatasetQuality, formatFileSize } from '../utils/datasetUtils';
@@ -37,6 +37,8 @@ const MAPPING_FIELDS: Array<{ key: keyof ColumnMapping; label: string; required?
   { key: 'sif_label',          label: 'SIF Label Column' },
   { key: 'severity',           label: 'Severity Column' },
   { key: 'site',               label: 'Site Column' },
+  { key: 'unit',               label: 'Operating Unit Column' },
+  { key: 'area',               label: 'Work Area Column' },
   { key: 'location',           label: 'Location Column' },
   { key: 'activity',           label: 'Activity Column' },
   { key: 'date',               label: 'Date Column' },
@@ -322,6 +324,14 @@ export default function UploadPage() {
                             </span>
                           ))}
                       </div>
+                      {((uploadResult.pii_detected_count ?? 0) > 0) && (
+                        <div className="my-2 p-2.5 bg-indigo-50 border border-indigo-200 rounded-lg flex items-center gap-2 text-xs text-indigo-900">
+                          <Shield className="w-4 h-4 text-indigo-600 shrink-0" />
+                          <span>
+                            <strong>Privacy Protection:</strong> {uploadResult.pii_detected_count} report(s) contained personal identifiers (names, IDs, phones) and were automatically sanitized before database storage.
+                          </span>
+                        </div>
+                      )}
                       <p className="text-xs text-green-700 font-medium mt-1">Redirecting to dashboard…</p>
                     </div>
                   )
@@ -598,6 +608,14 @@ export default function UploadPage() {
                     {(uploadResult.duplicates_skipped ?? 0) > 0 ? `, ${uploadResult.duplicates_skipped} duplicate(s) skipped` : ''}
                   </span>
                 </div>
+                {((uploadResult.pii_detected_count ?? 0) > 0) && (
+                  <div className="mb-2 p-2.5 bg-indigo-50 border border-indigo-200 rounded-lg flex items-center gap-2 text-xs text-indigo-900">
+                    <Shield className="w-4 h-4 text-indigo-600 shrink-0" />
+                    <span>
+                      <strong>Privacy Protection:</strong> {uploadResult.pii_detected_count} report(s) had sensitive personal identifiers sanitized.
+                    </span>
+                  </div>
+                )}
                 <p className="text-xs text-green-700 font-medium">Redirecting to dashboard…</p>
               </div>
             )

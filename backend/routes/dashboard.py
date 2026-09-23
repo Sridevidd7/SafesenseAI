@@ -233,3 +233,41 @@ def get_debug_count(
         "meta": _build_meta(counts.get("total_reports", 0)),
         **counts,
     }
+
+
+@router.get(
+    "/analytics/sif-heatmap",
+    summary="Operational SIF Risk Heatmap & Concentration Explorer",
+    description=(
+        "Hierarchical operational risk concentration view across: "
+        "Site -> Unit -> Area -> Activity -> LSR/Precursor -> Failed Barrier."
+    ),
+)
+@router.get(
+    "/sif-heatmap",
+    summary="Operational SIF Risk Heatmap (direct alias)",
+)
+def get_sif_heatmap(
+    site: str | None = None,
+    unit: str | None = None,
+    area: str | None = None,
+    activity: str | None = None,
+    lsr: str | None = None,
+    barrier: str | None = None,
+    db: Session = Depends(get_db),
+):
+    heatmap_data = analytics_svc.get_sif_risk_heatmap(
+        db=db,
+        site=site,
+        unit=unit,
+        area=area,
+        activity=activity,
+        lsr=lsr,
+        barrier=barrier,
+    )
+    total = heatmap_data["summary"]["total_reports"]
+    return {
+        "data": heatmap_data,
+        "meta": _build_meta(total),
+        **heatmap_data,
+    }
