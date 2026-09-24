@@ -143,19 +143,25 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
   return apiFetch<DashboardStats>('/dashboard/summary');
 }
 
-export const fetchDashboardSummary = fetchDashboardStats;
+export interface PatternAnomaly {
+  type:    'TEMPORAL_SPIKE' | 'SITE_CONCENTRATION_SPIKE' | string;
+  site?:   string;
+  anomaly?: boolean;
+  ratio?:  number;
+  reason?: string;
+}
 
 export interface TrendsIntelligenceResponse {
-  data: TrendPoint[];
-  trend: string;
+  data:         TrendPoint[];
+  trend:        string;
   trend_reason: string;
-  anomalies: any[];
-  insights: AIInsight[];
+  anomalies:    PatternAnomaly[];
+  insights:     AIInsight[];
   meta?: {
     total_reports?: number;
-    last_updated?: string;
-    source?: string;
-    is_empty?: boolean;
+    last_updated?:  string;
+    source?:        string;
+    is_empty?:      boolean;
   };
 }
 
@@ -488,6 +494,34 @@ export interface PatternItem {
   sample_descriptions?: string[];
   sites?:               string[];
   trend?:               'increasing' | 'stable' | 'decreasing' | string;
+  simplified_insight?:  string;
+  human_insight?:       string;
+}
+
+export interface PatternIntelligenceEnvelope {
+  data:              PatternItem[];
+  repeated_failures: PatternItem[];
+  insights:          AIInsight[];
+  meta?: {
+    total_reports?: number;
+    last_updated?:  string;
+    source?:        string;
+  };
+}
+
+export async function fetchAnalyticsPatterns(): Promise<PatternItem[]> {
+  return apiFetch<PatternItem[]>('/analytics/patterns');
+}
+
+/**
+ * GET /api/analytics/patterns (Full Envelope)
+ * Returns clusters, repeated failures, and insights synthesized from pattern engine.
+ */
+export async function fetchPatternIntelligence(): Promise<PatternIntelligenceEnvelope> {
+  const authHeaders = getAuthHeaders();
+  const res = await fetch('/api/analytics/patterns', { headers: authHeaders });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
 }
 
 export interface SiteRiskItem {
@@ -527,10 +561,6 @@ export interface DebugCounts {
   with_category: number;
   with_site:     number;
   with_activity: number;
-}
-
-export async function fetchAnalyticsPatterns(): Promise<PatternItem[]> {
-  return apiFetch<PatternItem[]>('/analytics/patterns');
 }
 
 export async function fetchAnalyticsInsights(): Promise<AIInsight[]> {

@@ -5,7 +5,17 @@ import RiskGauge from '../components/RiskGauge';
 import { analyzeReport } from '../utils/riskEngine';
 import { useMemo, useState, useEffect, useCallback } from 'react';
 import { ArrowLeft, CheckCircle, XCircle, RotateCcw, Shield, MessageSquare, Clock, User as UserIcon, AlertTriangle, Cpu } from 'lucide-react';
-import { fetchReviewsByReport, createReview, ReviewItem, fetchReportExplanation, LlmExplanationResponse } from '../services/api';
+import {
+  fetchReviewsByReport,
+  createReview,
+  ReviewItem,
+  fetchReportExplanation,
+  LlmExplanationResponse,
+  analyzeReportApi,
+} from '../services/api';
+import { ReportAnalysis } from '../types';
+import StructuredEvidencePanel from '../components/StructuredEvidencePanel';
+import FactorBreakdownView from '../components/FactorBreakdownView';
 
 const DECISION_BADGE: Record<string, { label: string; bg: string; text: string; border: string }> = {
   'CONFIRMED': { label: 'Confirmed', bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200' },
@@ -27,10 +37,12 @@ export default function ReportDetailPage() {
   const [submittingReview, setSubmittingReview] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
 
+  const [apiAnalysis, setApiAnalysis] = useState<ReportAnalysis | null>(null);
   const [explanation, setExplanation] = useState<LlmExplanationResponse | null>(null);
   const [loadingExplanation, setLoadingExplanation] = useState(false);
 
-  const analysis = useMemo(() => report ? analyzeReport(report) : null, [report]);
+  const localAnalysis = useMemo(() => report ? analyzeReport(report) : null, [report]);
+  const analysis = apiAnalysis || localAnalysis;
 
   const similarReports = useMemo(() => {
     if (!report || !analysis) return [];
@@ -38,6 +50,20 @@ export default function ReportDetailPage() {
       .filter(r => String(r.id) !== String(report.id) && r.life_saving_rule === analysis.life_saving_rule)
       .slice(0, 4);
   }, [report, reports, analysis]);
+
+  // Fetch full Phase 2 backend analysis including structured evidence & factor breakdown
+  useEffect(() => {
+    if (!report) return;
+    analyzeReportApi({
+      report_text: report.report_text,
+      severity: report.severity,
+      life_saving_rule: report.life_saving_rule,
+    })
+      .then(res => setApiAnalysis(res))
+      .catch(() => {
+        // Fallback to local deterministic analysis
+      });
+  }, [report]);
 
   const loadReviews = useCallback(async () => {
     if (!numericReportId || isNaN(numericReportId)) return;
@@ -226,11 +252,24 @@ export default function ReportDetailPage() {
                 )}
               </div>
 
+              {/* Structured Evidence & Safety Concepts Panel */}
+              <StructuredEvidencePanel
+                structuredEvidence={analysis.structured_evidence}
+                safetyConcepts={analysis.safety_concepts}
+                temporalSequence={analysis.temporal_sequence}
+              />
+
+              {/* Five-Factor Explainable Risk Breakdown */}
+              <FactorBreakdownView
+                factors={analysis.risk_factors}
+                breakdown={analysis.factor_breakdown}
+              />
+
               {/* Recommended Actions */}
               <div>
                 <h4 className="text-xs font-semibold text-slate-500 mb-2">Recommended Actions</h4>
                 <ol className="space-y-1">
-                  {(explanation?.recommended_actions || analysis.recommended_actions).slice(0, 5).map((a, i) => (
+                  {((explanation?.recommended_actions || analysis?.recommended_actions || []) as string[]).slice(0, 5).map((a: string, i: number) => (
                     <li key={i} className="flex items-start gap-2 text-xs text-slate-700">
                       <span className="text-blue-600 font-bold flex-shrink-0">{i + 1}.</span>{a}
                     </li>

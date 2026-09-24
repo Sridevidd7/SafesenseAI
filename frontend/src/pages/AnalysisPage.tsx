@@ -15,6 +15,8 @@ import { ReportAnalysis, SafetyReport, RiskLevel } from '../types';
 import RiskGauge from '../components/RiskGauge';
 import { RiskBadge, SIFBadge } from '../components/RiskBadge';
 import WhatIfSimulator from '../components/WhatIfSimulator';
+import StructuredEvidencePanel from '../components/StructuredEvidencePanel';
+import FactorBreakdownView from '../components/FactorBreakdownView';
 
 const PAGE_SIZE = 20;
 
@@ -705,6 +707,19 @@ export default function AnalysisPage() {
                 </p>
               </div>
 
+              {/* Structured Evidence & Safety Concepts Panel */}
+              <StructuredEvidencePanel
+                structuredEvidence={analysis.structured_evidence}
+                safetyConcepts={analysis.safety_concepts}
+                temporalSequence={analysis.temporal_sequence}
+              />
+
+              {/* Five-Factor Explainable Risk Breakdown */}
+              <FactorBreakdownView
+                factors={analysis.risk_factors}
+                breakdown={analysis.factor_breakdown}
+              />
+
               {/* Recommended Actions */}
               {analysis.recommended_actions && analysis.recommended_actions.length > 0 && (
                 <div className="card p-4 space-y-2">
@@ -720,41 +735,6 @@ export default function AnalysisPage() {
                       </li>
                     ))}
                   </ul>
-                </div>
-              )}
-
-              {/* Risk Factor Breakdown Accordion */}
-              {analysis.risk_factors && analysis.risk_factors.length > 0 && (
-                <div className="card p-4">
-                  <button
-                    onClick={() => setShowFactors(!showFactors)}
-                    className="flex items-center justify-between w-full text-xs font-bold text-slate-800"
-                  >
-                    <span className="flex items-center gap-1.5">
-                      <Sliders className="w-3.5 h-3.5 text-blue-600" />
-                      Risk Factor Breakdown ({analysis.risk_factors.length})
-                    </span>
-                    {showFactors ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                  </button>
-
-                  {showFactors && (
-                    <div className="mt-3 space-y-2.5 pt-2 border-t border-slate-100">
-                      {analysis.risk_factors.map(f => (
-                        <div key={f.name} className="text-xs">
-                          <div className="flex justify-between text-[11px] mb-1">
-                            <span className="font-semibold text-slate-700">{f.name}</span>
-                            <span className="font-bold text-slate-500">{f.score}/{f.max_score}</span>
-                          </div>
-                          <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                            <div
-                              className="h-full bg-blue-600 rounded-full"
-                              style={{ width: `${(f.score / f.max_score) * 100}%` }}
-                            />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
                 </div>
               )}
 

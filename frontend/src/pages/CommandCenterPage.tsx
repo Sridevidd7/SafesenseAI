@@ -10,6 +10,7 @@ import {
   SiteRiskItem,
   PatternItem,
   ActionItem,
+  ApiReport,
 } from '../services/api';
 import { Zap, AlertTriangle, MapPin, GitBranch, CheckSquare, Shield, ArrowRight, RefreshCw } from 'lucide-react';
 import EmptyState from '../components/EmptyState';
@@ -150,7 +151,7 @@ export default function CommandCenterPage() {
             </button>
           </div>
           <div className="grid sm:grid-cols-2 gap-4">
-            {data.high_priority_reports.slice(0, 4).map(report => (
+            {data.high_priority_reports.slice(0, 4).map((report: ApiReport) => (
               <div
                 key={report.report_id || report.id}
                 className="card p-5 cursor-pointer hover:border-slate-300 transition-all border-red-200 bg-red-50/30"
