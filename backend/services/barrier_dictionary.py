@@ -286,8 +286,8 @@ BARRIER_REGEX_PATTERNS: Dict[str, List[re.Pattern]] = {
         re.compile(r"\b(?:fire\s+watch|fire\s+guard)\s+(?:was|were)?\s*(?:not|never)\s*(?:posted|assigned|present|available|stationed)\b"),
     ],
     "PPE Not Available": [
-        re.compile(r"\b(?:without|no|not|missing|forgot|omitted)\s+(?:any\s+)?(?:ppe|protective\s+equipment|gloves|safety\s+glasses|eye\s+protection|helmet|hard\s+hat|mask|respirator)\b"),
-        re.compile(r"\bnot\s+wearing\s+(?:any\s+)?(?:ppe|gloves|safety\s+glasses|eye\s+protection|helmet|hard\s+hat|mask|respirator|protection)\b"),
+        re.compile(r"\b(?:without|no|not|missing|forgot|omitted)\s+(?:any\s+|approved\s+|proper\s+|required\s+|standard\s+)?(?:ppe|protective\s+equipment|gloves|safety\s+glasses|eye\s+protection|helmet|hard\s+hat|mask|respirator)\b"),
+        re.compile(r"\bnot\s+wearing\s+(?:any\s+|approved\s+|proper\s+|required\s+|standard\s+)?(?:ppe|gloves|safety\s+glasses|eye\s+protection|helmet|hard\s+hat|mask|respirator|protection)\b"),
     ],
     "Pressure Not Released": [
         re.compile(r"\b(?:not|never|was\s+not|forgot\s+to|omitted\s+to)\s+(?:depressurized|vented|bled|drained)\b"),
