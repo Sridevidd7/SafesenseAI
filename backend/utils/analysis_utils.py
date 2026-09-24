@@ -296,6 +296,7 @@ def safe_fallback_analysis(report_text: str = "", reason: str = "Fallback trigge
         "barrier_failures": ["Unknown Barrier Failure"],
         "barrier_failure": "Unknown Barrier Failure",
         "barrier_evidence": [],
+        "safety_concepts": [],
         "confidence": "LOW",
         "confidence_level": "LOW",
         "confidence_score": 0.30,

@@ -68,7 +68,7 @@ PREVENTIVE_STOP_REGEX = re.compile(
     r"stopped\s+(?:work|the\s+work|entry|task|job|activity|operation|hot\s+work|maintenance|welding|climbing)?|"
     r"halted\s+(?:work|the\s+work|entry|task|job|activity|operation|the\s+operation)?|"
     r"aborted\s+(?:entry|operation|task|job|activity)?|"
-    r"suspended\s+(?:work|the\s+work|entry|task|job|activity|operation|the\s+operation)?|"
+    r"suspended\s+(?:work|the\s+work|entry|task|job|activity|operation|the\s+operation)|"
     r"avoided\s+(?:entering|working|climbing|proceeding|operating|starting|entry|work)?|"
     r"refused\s+(?:to\s+enter|to\s+work|to\s+proceed|to\s+climb|to\s+start|entry)?|"
     r"(?:supervisor|management|operator|team|lead)\s+(?:intervened|halted|stopped|suspended)|"
@@ -111,13 +111,14 @@ POST_EXPOSURE_INDICATORS = re.compile(
 
 ACTIVE_EXPOSURE_REGEX = re.compile(
     r"\b("
-    r"(?:entered|was\s+entering|had\s+entered|proceeded\s+to\s+enter|inside)\s+(?:the\s+)?(?:confined\s+space|vessel|tank|reactor|column|sump|pit)|"
-    r"(?:working|worked|operating|operated)\s+(?:on|with|inside)\s+(?:live|energized|circuit|switchgear)|"
-    r"(?:climbed|climbing|working|worked)\s+(?:at\s+height|on\s+scaffold|on\s+ladder|on\s+roof)|"
-    r"(?:grinding|welding|cutting)\s+.*?\s+without|"
-    r"without\s+(?:gas\s+test|permit|isolation|lockout|harness|ppe|safety\s+glasses|fire\s+watch|standby)\s+.*?\s+(?:work\s+continued|proceeded|continued|entered)|"
-    r"(?:entered|operated|worked|grinding|welding|climbed)\s+without|"
-    r"without\s+.*?\s+(?:entered|operated|worked|climbed)"
+    r"(?:entered|was\s+entering|had\s+entered|proceeded\s+to\s+enter|inside|went\s+inside|stepped\s+inside|stepping\s+into|stepped\s+into|accessing|accessed|penetrated)\s+(?:the\s+)?(?:confined\s+space|vessel|tank|reactor|column|sump|pit|chamber|pipe|drum)?|"
+    r"(?:entry\s+occurred|entry\s+was\s+made|unauthorized\s+entry|confined[\s-]space\s+entry|vessel\s+entry|tank\s+entry)|"
+    r"(?:working|worked|operating|operated|servicing|serviced|repairing|repaired)\s+(?:on|with|inside)\s+(?:a\s+|the\s+)?(?:live|energized|circuit|switchgear|panel|breaker|motor|pump|board)|"
+    r"(?:climbed|climbing|mounted|mounting|working|worked)\s+(?:at\s+height|on\s+scaffold|on\s+ladder|on\s+roof|tower)|"
+    r"(?:grinding|welding|cutting)\s+.*?\s+(?:without|before|prior\s+to)|"
+    r"(?:without|before|prior\s+to)\s+(?:gas\s+test|permit|isolation|lockout|harness|ppe|safety\s+glasses|fire\s+watch|standby|atmospheric\s+test(?:ing)?|atmospheric\s+monitoring)\s+.*?\s+(?:work\s+continued|proceeded|continued|entered|went\s+inside)|"
+    r"(?:entered|operated|worked|grinding|welding|climbed|went\s+inside|stepped\s+into|mounted|accessed)\s+(?:without|before|prior\s+to)|"
+    r"(?:without|before|prior\s+to)\s+.*?\s+(?:entered|operated|worked|climbed|went\s+inside|stepped\s+into|mounted|accessed)"
     r")\b",
     re.IGNORECASE
 )
@@ -140,8 +141,11 @@ NEGATED_BARRIER_REGEX = re.compile(
     r"\b("
     r"(?:without|with\s+no|no|missing|lack\s+of|absence\s+of|failed\s+to\s+(?:conduct|perform|obtain|wear|apply|use))\s+"
     r"(?:any\s+|approved\s+|proper\s+|required\s+|standard\s+|valid\s+)?"
-    r"(?:gas\s+test(?:ing)?|atmospheric\s+test(?:ing)?|testing|permit(?: to work)?|ptw|authorization|clearance|isolation|lockout|tagout|loto|harness|fall\s+protection|fall\s+arrest|ppe|safety\s+glasses|gloves|helmet|mask|respirator|fire\s+watch|standby(?:\s+person)?|attendant|ventilation|guardrail|earthing|grounding|chock|banksman)|"
+    r"(?:gas\s+test(?:ing)?|atmospheric\s+test(?:ing)?|atmospheric\s+monitoring|gas\s+monitoring|air\s+monitoring|testing|permit(?: to work)?|ptw|authorization|clearance|isolation|lockout|tagout|loto|harness|fall\s+protection|fall\s+arrest|ppe|safety\s+glasses|gloves|helmet|mask|respirator|fire\s+watch|standby(?:\s+person)?|attendant|ventilation|guardrail|earthing|grounding|chock|banksman)|"
     r"(?:gas\s+test(?:ing)?|testing|permit|ptw|authorization|isolation|lockout|tagout|loto|harness|fall\s+protection|ppe|safety\s+glasses|fire\s+watch|standby|attendant|ventilation|guardrail)\s+(?:was\s+|were\s+)?(?:not\s+(?:done|obtained|conducted|applied|completed|issued|available|present|worn|used|carried\s+out|tested|performed))|"
+    r"(?:before|prior\s+to)\s+(?:any\s+)?(?:atmospheric\s+testing|atmospheric\s+monitoring|gas\s+testing|gas\s+test|testing|permit|ptw|authorization|clearance|isolation|lockout|tagout|securing\s+lanyard|harness|standby)|"
+    r"without\s+(?:checking|verifying|monitoring|testing|measuring|sampling)\s+(?:the\s+)?(?:atmosphere|gas|air|oxygen|gas\s+levels)|"
+    r"without\s+(?:locking\s+out|isolating|de-energizing|securing|wearing|obtaining|getting)\s+(?:the\s+)?(?:breaker|power|circuit|lanyard|harness|permit|authorization)|"
     r"not\s+wearing\s+(?:any\s+|approved\s+|proper\s+|required\s+)?(?:ppe|harness|helmet|gloves|safety\s+glasses|mask|respirator|protection|seat\s*belt)|"
     r"not\s+(?:tested|isolated|depressurized|grounded|authorized|inspected)|"
     r"entry\s+without\s+testing"
@@ -186,11 +190,21 @@ def extract_evidence(text: str) -> List[str]:
         "confined space", "without gas testing", "without permit", "no permit",
         "without isolation", "lockout", "live circuit", "without harness",
         "welding", "without fire watch", "exclusion zone", "without standby",
-        "no standby", "not wearing ppe", "entry without testing", "without testing"
+        "no standby", "not wearing ppe", "entry without testing", "without testing",
+        "before atmospheric testing", "without checking the atmosphere",
+        "without atmospheric monitoring"
     ]
     evidence = [p for p in key_phrases if p in lower]
-    pattern_matches = re.findall(r"(?:without|no|not|missing)\s+\w+(?:\s+\w+)?", lower)
+    pattern_matches = re.findall(r"(?:without|no|not|missing|before|prior\s+to)\s+\w+(?:\s+\w+)?", lower)
     evidence += [m for m in pattern_matches if m not in evidence]
+    try:
+        from services.concept_extractor import extract_safety_concepts
+        c_ev = extract_safety_concepts(text).get("evidence_phrases", [])
+        for ce in c_ev:
+            if ce not in evidence:
+                evidence.append(ce)
+    except Exception:
+        pass
     return list(set(evidence))[:8]
 
 
@@ -217,36 +231,48 @@ def analyze_negation_context(text: str) -> Dict[str, Any]:
     barrier_match = NEGATED_BARRIER_REGEX.search(lower)
     ambiguous_match = AMBIGUOUS_INDICATORS.search(lower)
 
+    barrier_phrase_detected = barrier_match.group(0) if barrier_match else None
+    if not barrier_phrase_detected:
+        try:
+            from services.concept_extractor import extract_safety_concepts
+            c_data = extract_safety_concepts(lower)
+            if c_data.get("barrier_omissions"):
+                barrier_phrase_detected = c_data["barrier_omissions"][0]["evidence"][0]
+        except Exception:
+            pass
+
+    has_barrier = bool(barrier_match or barrier_phrase_detected)
+
     # 1. Check for Ambiguity
     if ambiguous_match:
         return {
             "negation_type": "AMBIGUOUS",
             "preventive_phrase": stop_match.group(0) if stop_match else None,
-            "barrier_phrase": barrier_match.group(0) if barrier_match else None,
+            "barrier_phrase": barrier_phrase_detected,
             "ambiguous_phrase": ambiguous_match.group(0),
             "interpretation": f"Ambiguous scenario detected ('{ambiguous_match.group(0)}'). Exposure or execution status is uncertain.",
             "score_impact": "Risk score held at moderate level (MEDIUM, ~45); flagged for supervisor review."
         }
 
     # 2. Check if a stop was negated (e.g. "did not stop despite no permit")
-    if negated_stop_match and barrier_match:
+    if negated_stop_match and has_barrier:
         return {
             "negation_type": "UNSAFE_VIOLATION",
             "preventive_phrase": None,
-            "barrier_phrase": barrier_match.group(0),
-            "interpretation": f"Active violation: Failed/refused to stop despite missing control ('{barrier_match.group(0)}').",
+            "barrier_phrase": barrier_phrase_detected,
+            "interpretation": f"Active violation: Failed/refused to stop despite missing control ('{barrier_phrase_detected}').",
             "score_impact": "Risk score increased (+25 barrier penalty) and SIF potential flagged YES due to active execution without safety barrier."
         }
 
     # 3. Stop Action Detected: Distinguish pre-exposure prevention vs post-exposure intervention
     if stop_match and not negated_stop_match:
         stop_phrase = stop_match.group(0)
-        barrier_phrase = barrier_match.group(0) if barrier_match else "missing safety requirement"
+        barrier_phrase = barrier_phrase_detected or "missing safety requirement"
         has_pre = bool(PRE_EXPOSURE_PREVENTION_REGEX.search(lower))
         has_post = bool(POST_EXPOSURE_INDICATORS.search(lower))
         has_active = bool(ACTIVE_EXPOSURE_REGEX.search(lower))
 
-        if (has_active or has_post or (barrier_match and not has_pre)) and not has_pre:
+        if (has_active or has_post or (has_barrier and not has_pre)) and not has_pre:
             return {
                 "negation_type": "UNSAFE_WITH_INTERVENTION",
                 "preventive_phrase": stop_phrase,
@@ -264,13 +290,12 @@ def analyze_negation_context(text: str) -> Dict[str, Any]:
             }
 
     # 4. Negated Barrier / Unsafe Condition without Stop Action
-    if barrier_match:
-        barrier_phrase = barrier_match.group(0)
+    if has_barrier:
         return {
             "negation_type": "UNSAFE_VIOLATION",
             "preventive_phrase": None,
-            "barrier_phrase": barrier_phrase,
-            "interpretation": f"Unsafe condition / barrier violation: Activity performed or attempted without required control ('{barrier_phrase}').",
+            "barrier_phrase": barrier_phrase_detected,
+            "interpretation": f"Unsafe condition / barrier violation: Activity performed or attempted without required control ('{barrier_phrase_detected}').",
             "score_impact": "Risk score increased (+25 barrier penalty) and SIF potential flagged YES due to active execution without safety barrier."
         }
 
@@ -725,11 +750,18 @@ def calculate_risk_score(report: Dict) -> Dict:
 
         # 3. Exposure (0-20)
         no_exposure_match = EXPOSURE_ABSENT_OR_PREVENTED_REGEX.search(lower)
+        is_active_exposure = False
+        try:
+            from services.concept_extractor import extract_safety_concepts
+            is_active_exposure = extract_safety_concepts(lower).get("exposure_detected", False)
+        except Exception:
+            pass
+
         if no_exposure_match and neg_type != "UNSAFE_VIOLATION":
             exposure_score = 0
         elif any(w in lower for w in ["two worker", "crew", "multiple workers", "team", "contract workers"]):
             exposure_score = 20
-        elif any(w in lower for w in ["worker", "technician", "operator", "electrician", "welder", "contractor"]) and (is_standard_lsr or neg_type == "UNSAFE_VIOLATION"):
+        elif (any(w in lower for w in ["worker", "workers", "technician", "technicians", "operator", "operators", "electrician", "welder", "contractor", "personnel", "employee", "mechanic", "rigger", "driver"]) or is_active_exposure) and (is_standard_lsr or neg_type == "UNSAFE_VIOLATION"):
             exposure_score = 16
         elif any(w in lower for w in ["worker", "technician", "operator", "employee"]):
             exposure_score = 4
@@ -988,10 +1020,18 @@ def analyze_report(report: Dict) -> Dict:
                 "Brief all workers on Life-Saving Rules compliance."
             ]
 
+        safety_concepts = []
+        try:
+            from services.concept_extractor import extract_safety_concepts
+            safety_concepts = extract_safety_concepts(text).get("concepts", [])
+        except Exception:
+            safety_concepts = []
+
         raw_output = {
             "source": "engine",
             "fallback_indicator": None,
             "input_feedback": generate_input_feedback(analysis_quality),
+            "safety_concepts": safety_concepts,
             "risk_score": score,
             "raw_score": raw_score,
             "normalized_score": normalized_score,

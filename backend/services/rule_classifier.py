@@ -22,7 +22,8 @@ RULE_DEFINITIONS: Dict[str, Dict[str, List[str]]] = {
             "entered vessel", "entered tank", "tank entry", "vessel entry",
             "inside chamber", "inside tank", "inside vessel", "confined space",
             "manhole entry", "column entry", "reactor entry", "inside sump",
-            "entered pit", "entered chamber", "entry into tank", "entry into vessel"
+            "entered pit", "entered chamber", "entry into tank", "entry into vessel",
+            "stepped into chamber", "stepped into tank", "stepped into vessel", "stepped inside", "went inside"
         ],
         "medium_signals": [
             "gas testing", "gas test", "atmospheric test", "atmosphere",
@@ -215,6 +216,18 @@ def classify_life_saving_rule(text: str) -> Dict[str, Any]:
 
         if score > 0:
             scores[rule] = score
+
+    # Concept Extraction Boost:
+    # Reinforce rules identified by semantic concept composition unless pure non-industrial
+    if not is_pure_non_industrial:
+        try:
+            from services.concept_extractor import extract_safety_concepts
+            concepts_data = extract_safety_concepts(text)
+            for dom in concepts_data.get("hazard_domains", []):
+                if dom in RULE_DEFINITIONS and dom not in scores:
+                    scores[dom] = 5
+        except Exception as exc:
+            logger.warning(f"Concept extractor integration caught in rule_classifier: {exc}")
 
     # Ranking & Primary/Secondary resolution
     if not scores:
