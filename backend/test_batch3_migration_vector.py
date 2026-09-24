@@ -144,54 +144,6 @@ def get_provider():
     return _Batch3TestProvider()
 
 
-class MigrationLogicTests(unittest.TestCase):
-    """Migration semantics tested via the script's migrate() against a target
-    SQLite database (the script body is ORM-generic; the PG URL gate is
-    unit-tested by monkeypatching database flags)."""
-
-    def setUp(self):
-        # Build a source SQLite DB with known content
-        import tempfile
-        self.tmp = tempfile.TemporaryDirectory()
-        self.src_path = os.path.join(self.tmp.name, "source.db")
-        self.tgt_path = os.path.join(self.tmp.name, "target.db")
-
-        from sqlalchemy import create_engine, event
-        from sqlalchemy.orm import sessionmaker
-        from database import Base
-        import models
-
-        src_engine = create_engine(f"sqlite:///{self.src_path}")
-        Base.metadata.create_all(bind=src_engine)
-        s = sessionmaker(bind=src_engine)()
-        s.add(models.Report(
-            report_id="MIG-1", content_hash="hash-MIG-1",
-            description="Technician entered tank without gas test.",
-            category="Unsafe Act", risk_level="CRITICAL", risk_score=90,
-            sif_potential="YES", site="Site Alpha", unit="U", area="A",
-            activity="Act", barrier_failure="Gas Testing Not Completed",
-            pii_detected=0, pii_count=0, pii_types="", date="2026-03-01",
-        ))
-        s.add(models.Action(report_id="MIG-1", description="fix", owner="hse", status="OPEN"))
-        s.add(models.Review(report_id="MIG-1", decision="CONFIRM", reviewer="HSE Officer"))
-        s.add(models.UploadedFile(file_hash="fhash-1", filename="demo.csv"))
-        s.commit()
-        s.close()
-        src_engine.dispose()
-
-    def tearDown(self):
-        self.tmp.cleanup()
-
-    def _run_migrate(self, dry_run=False):
-        """Run migrate() with the target pointed at a temp SQLite DB."""
-        import importlib
-        import database
-        with patch.object(database, "DATABASE_URL", f"sqlite:///{self.tgt_path}"), \
-             patch.object(database, "IS_SQLITE", False):
-            import scripts_loader  # noqa: F401 — placeholder to satisfy linters
-        return None
-
-
 class MigrationScriptRealRunTests(unittest.TestCase):
     """End-to-end migration script runs in subprocesses. The migration body is
     ORM-generic; the PG-URL gate is exercised by monkeypatching database flags
@@ -391,6 +343,49 @@ class DockerComposeTests(unittest.TestCase):
         self.assertIn('"8000:8000"', content)
 
 
+class SearchSqlConstructionTests(unittest.TestCase):
+    """Structural proof of the LIMIT-before-filter fix (no PG server needed):
+    candidate filtering must live in the WHERE clause, BEFORE ORDER BY/LIMIT."""
+
+    def test_candidate_filter_in_where_clause_before_order_and_limit(self):
+        from services.vector_store import _build_search_sql
+        sql, params = _build_search_sql(
+            [1.0, 0.0, 0.0], "m", top_k=5, candidate_report_ids=["B", "A"]
+        )
+        text = str(sql)
+        where_pos = text.upper().find("WHERE")
+        in_pos = text.upper().find("REPORT_ID IN")
+        order_pos = text.upper().find("ORDER BY")
+        limit_pos = text.upper().find("LIMIT")
+        self.assertGreater(in_pos, where_pos, "IN clause must be inside WHERE")
+        self.assertLess(in_pos, order_pos, "filtering must precede ORDER BY")
+        self.assertLess(order_pos, limit_pos, "LIMIT must apply after filtering")
+        # Parameterized identifiers (no value concatenation into SQL)
+        self.assertIn(":cid0", text)
+        self.assertIn(":cid1", text)
+        self.assertNotIn("'B'", text)
+        self.assertNotIn("'A'", text)
+        self.assertEqual(params["cid0"], "B")
+        self.assertEqual(params["cid1"], "A")
+        self.assertEqual(params["limit"], 5)
+
+    def test_no_candidate_filter_omits_in_clause(self):
+        from services.vector_store import _build_search_sql
+        sql, params = _build_search_sql([1.0], "m", top_k=3, candidate_report_ids=None)
+        text = str(sql)
+        self.assertNotIn("IN (", text.upper())
+        self.assertNotIn(":cid0", text)
+        self.assertEqual(params["limit"], 3)
+
+    def test_similarity_ordering_uses_cosine_distance_ascending(self):
+        from services.vector_store import _build_search_sql
+        text = str(_build_search_sql([1.0], "m", top_k=3)[0])
+        # distance operator present, ORDER BY ascending (no DESC)
+        self.assertIn("<=>", text)
+        order_fragment = text.upper().split("ORDER BY")[1]
+        self.assertNotIn("DESC", order_fragment)
+
+
 class SafetyBoundaryTests(unittest.TestCase):
 
     def test_protected_modules_have_no_vector_imports(self):
@@ -530,7 +525,8 @@ class PostgreSQLIntegrationTests(unittest.TestCase):
                 self.assertIsNotNone(row)
                 self.assertNotIn("[", str(row.embedding)[:1])  # native vector repr
 
-                search = VS.search_similar([1.0, 0.0, 0.0], "m", top_k=3)
+                # Search uses the SAME injected TEST_DATABASE_URL session
+                search = VS.search_similar([1.0, 0.0, 0.0], "m", top_k=3, session=db)
                 self.assertEqual(search["status"], "ok")
                 ids = [c["report_id"] for c in search["candidates"]]
                 self.assertEqual(len(ids), 3)
@@ -542,14 +538,32 @@ class PostgreSQLIntegrationTests(unittest.TestCase):
                 )
 
                 # model_id isolation: other model has no rows
-                empty = VS.search_similar([1.0, 0.0, 0.0], "other-model")
+                empty = VS.search_similar([1.0, 0.0, 0.0], "other-model", session=db)
                 self.assertEqual(empty["candidates"], [])
 
-                # candidate-set filtering
+                # candidate-set filtering (in-SQL, pre-LIMIT)
                 filtered = VS.search_similar(
-                    [1.0, 0.0, 0.0], "m", top_k=3, candidate_report_ids=["PG-1"]
+                    [1.0, 0.0, 0.0], "m", top_k=3, candidate_report_ids=["PG-1"], session=db
                 )
                 self.assertEqual([c["report_id"] for c in filtered["candidates"]], ["PG-1"])
+
+                # candidate-set filtering before LIMIT: top-1 WITHIN a candidate
+                # set whose members are NOT the global top-1
+                narrow = VS.search_similar(
+                    [1.0, 0.0, 0.0], "m", top_k=1,
+                    candidate_report_ids=["PG-1", "PG-2"], session=db,
+                )
+                # Global top-1 would be PG-0; restricting to {PG-1, PG-2} must
+                # still return 1 result (the better of the two), proving LIMIT
+                # applied after candidate filtering.
+                self.assertEqual(len(narrow["candidates"]), 1)
+                self.assertEqual(narrow["candidates"][0]["report_id"], "PG-2")
+
+                # empty candidate set -> no matches (explicit semantics)
+                none = VS.search_similar(
+                    [1.0, 0.0, 0.0], "m", top_k=3, candidate_report_ids=[], session=db
+                )
+                self.assertEqual(none["candidates"], [])
 
                 # upsert idempotency
                 VS.upsert_embeddings([VS.EmbeddingInput("PG-0", "m", [0.5, 0.5, 0.0])], session=db)

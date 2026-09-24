@@ -243,9 +243,12 @@ def insert_report(
     try:
         from services.vector_store import queue_embedding_on_ingest
         queue_embedding_on_ingest(new_report.report_id, description)
-    except Exception:
+    except Exception as exc:
         # Vector infrastructure must never affect deterministic ingestion.
-        pass
+        logger.warning(
+            f"[{datetime.now(timezone.utc).isoformat()}] EVENT=embedding_hook_skipped "
+            f"REPORT_ID={new_report.report_id} REASON={exc}"
+        )
 
     return new_report, True
 

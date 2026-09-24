@@ -162,6 +162,54 @@ def text_to_vector(text_repr: str) -> List[float]:
 
 # ─── Public API ───────────────────────────────────────────────────────────────
 
+def _build_search_sql(
+    query_vector: Sequence[float],
+    model_id: str,
+    top_k: int,
+    candidate_report_ids: Optional[Sequence[str]] = None,
+):
+    """
+    Build the pgvector similarity-search statement.
+
+    Contract (safety-relevant for correct advisory ranking):
+    - candidate_report_ids constrains the query ITSELF via a parameterized IN
+      clause placed in the WHERE block, so ORDER BY cosine distance and LIMIT
+      operate over the FILTERED candidate set — never post-LIMIT filtering.
+    - Bound parameters only; user values are never concatenated into SQL text.
+
+    Returns (sqlalchemy TextClause, params dict).
+    """
+    from sqlalchemy import text as _text
+
+    params: Dict[str, Any] = {
+        "qvec": "[" + ",".join(str(float(v)) for v in query_vector) + "]",
+        "model_id": model_id,
+        "limit": int(top_k),
+    }
+    candidate_clause = ""
+    if candidate_report_ids is not None:
+        ids = [str(i) for i in candidate_report_ids]
+        placeholders = ", ".join(f":cid{i}" for i in range(len(ids)))
+        for i, cid in enumerate(ids):
+            params[f"cid{i}"] = cid
+        candidate_clause = f" AND report_id IN ({placeholders})"
+
+    sql = _text(
+        """
+        SELECT report_id,
+               embedding <=> CAST(:qvec AS vector) AS distance
+        FROM report_embeddings
+        WHERE model_id = :model_id
+          AND embedding IS NOT NULL"""
+        + candidate_clause
+        + """
+        ORDER BY embedding <=> CAST(:qvec AS vector)
+        LIMIT :limit
+        """
+    )
+    return sql, params
+
+
 def upsert_embeddings(
     items: Iterable[EmbeddingInput],
     session: Optional[Any] = None,
@@ -264,6 +312,7 @@ def search_similar(
     top_k: int = 10,
     min_score: float = 0.0,
     candidate_report_ids: Optional[Sequence[str]] = None,
+    session: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """
     Advisory similarity search: returns candidate report references ordered by
@@ -271,10 +320,17 @@ def search_similar(
 
     - PostgreSQL + pgvector: native `<=>` cosine-distance search with HNSW
       index, filtered by model_id (and optionally restricted to a candidate
-      set of report_ids).
+      set of report_ids). Candidate filtering happens INSIDE the SQL WHERE
+      clause, so top-k is computed over the filtered set (never post-LIMIT).
     - SQLite / disabled flag / any failure: returns status explaining
       unavailability with an empty candidates list. The application and all
       deterministic safety paths are unaffected.
+
+    Args:
+        session: optional SQLAlchemy session to reuse (e.g. a session bound to
+            a specific test/integration database). Defaults to a fresh
+            application session, which is closed before returning; a supplied
+            session is left open for the caller to manage.
     """
     info = get_backend_info()
     empty: Dict[str, Any] = {
@@ -313,40 +369,26 @@ def search_similar(
     try:
         import models
         from pgvector.sqlalchemy import Vector as PGVector  # noqa: F401
-        from database import SessionLocal
         from sqlalchemy import text as _text
 
-        session = SessionLocal()
+        own_session = session is None
+        if own_session:
+            from database import SessionLocal
+            session = SessionLocal()
         try:
-            # Cosine distance via pgvector's <=> operator, ordered ascending
-            # (distance 0 == identical direction). Filter to the requested
-            # model so different embedding models never mix semantics.
-            sql = _text(
-                """
-                SELECT report_id,
-                       embedding <=> CAST(:qvec AS vector) AS distance
-                FROM report_embeddings
-                WHERE model_id = :model_id
-                  AND embedding IS NOT NULL
-                ORDER BY embedding <=> CAST(:qvec AS vector)
-                LIMIT :limit
-                """
+            # Empty candidate set: semantically no matches possible.
+            if candidate_report_ids is not None and len(candidate_report_ids) == 0:
+                return {**empty, "candidates": []}
+
+            sql, params = _build_search_sql(
+                query_vector, model_id, top_k, candidate_report_ids
             )
-            rows = session.execute(
-                sql,
-                {
-                    "qvec": "[" + ",".join(str(float(v)) for v in query_vector) + "]",
-                    "model_id": model_id,
-                    "limit": int(top_k),
-                },
-            ).fetchall()
+            rows = session.execute(sql, params).fetchall()
 
             candidates: List[SimilarCandidate] = []
             for report_id, distance in rows:
                 score = max(0.0, 1.0 - float(distance))
                 if score < min_score:
-                    continue
-                if candidate_report_ids is not None and report_id not in candidate_report_ids:
                     continue
                 candidates.append(
                     SimilarCandidate(
@@ -361,7 +403,8 @@ def search_similar(
                 "candidates": [c.to_dict() for c in candidates],
             }
         finally:
-            session.close()
+            if own_session:
+                session.close()
     except Exception as exc:
         logger.warning("[VECTOR_STORE] search failed: %s", exc)
         return {**empty, "status": "error", "reason": f"search failed: {exc}"}
