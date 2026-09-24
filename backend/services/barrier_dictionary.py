@@ -536,6 +536,23 @@ def detect_barriers_with_evidence(text: str) -> List[Dict[str, Any]]:
 
     detected: Dict[str, Dict[str, Any]] = {}
 
+    # ── Stage A0: Compositional Concept Extraction (High Confidence: 0.94 – 0.98)
+    try:
+        from services.concept_extractor import get_compositional_barrier_evidence
+        concept_evidence = get_compositional_barrier_evidence(text)
+        for c_item in concept_evidence:
+            b_name = c_item["barrier"]
+            detected[b_name] = {
+                "barrier": b_name,
+                "confidence_score": c_item["confidence_score"],
+                "confidence": c_item["confidence"],
+                "method": c_item.get("method", "concept"),
+                "evidence": list(c_item.get("evidence", []))[:4],
+                "detection_reason": c_item.get("detection_reason")
+            }
+    except Exception as exc:
+        logger.warning(f"Concept extractor integration caught: {exc}")
+
     # ── Stage A: Flexible Regex & Synonym Matching (High Confidence: 0.88 – 0.98)
     for barrier, patterns in BARRIER_REGEX_PATTERNS.items():
         matched_phrases = []
@@ -554,13 +571,21 @@ def detect_barriers_with_evidence(text: str) -> List[Dict[str, Any]]:
         if matched_phrases:
             base_conf = 0.92
             conf = min(0.99, base_conf + (len(matched_phrases) - 1) * 0.03)
-            detected[barrier] = {
-                "barrier": barrier,
-                "confidence_score": round(conf, 2),
-                "confidence": round(conf, 2),
-                "method": "synonym",
-                "evidence": list(dict.fromkeys(matched_phrases))[:4]
-            }
+            if barrier in detected:
+                existing_ev = detected[barrier].get("evidence", [])
+                merged_ev = list(dict.fromkeys(matched_phrases + existing_ev))[:4]
+                detected[barrier]["evidence"] = merged_ev
+                detected[barrier]["confidence_score"] = max(detected[barrier]["confidence_score"], round(conf, 2))
+                detected[barrier]["confidence"] = detected[barrier]["confidence_score"]
+                detected[barrier]["method"] = "synonym"
+            else:
+                detected[barrier] = {
+                    "barrier": barrier,
+                    "confidence_score": round(conf, 2),
+                    "confidence": round(conf, 2),
+                    "method": "synonym",
+                    "evidence": list(dict.fromkeys(matched_phrases))[:4]
+                }
 
     # ── Stage B: Semantic Boost Mapping (Medium-High Confidence: 0.75 – 0.85)
     if has_negation:
