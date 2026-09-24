@@ -581,11 +581,44 @@ export interface CopilotChatPayload {
   history?: CopilotHistoryMessage[];
 }
 
+// Phase 3 grounding types (mirror backend schemas.py)
+export interface CopilotAggregate {
+  metric: string;
+  value: number | string;
+  scope: string;
+}
+
+export interface CopilotPatternInfo {
+  pattern_id: string;
+  pattern_type: string;
+  description: string;
+  frequency: number;
+  trend?: string | null;
+  sites: string[];
+  activities: string[];
+  barriers: string[];
+  evidence_report_ids: string[];
+  confidence?: number | null;
+}
+
+export interface CopilotGrounding {
+  reports_examined: number;
+  sif_count: number;
+  date_range?: string | null;
+  filters_applied: Record<string, string>;
+  filters_unapplied: string[];
+  aggregates: CopilotAggregate[];
+  source_reports: string[];
+  patterns: CopilotPatternInfo[];
+  pattern_source?: string | null;
+}
+
 export interface CopilotChatResponse {
   answer: string;
   source_reports: string[];
   data_source: string;
   model: string;
+  grounding?: CopilotGrounding | null;
 }
 
 /**
