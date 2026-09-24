@@ -32,9 +32,10 @@ def create_database_engine(url: str = None):
     Create the SQLAlchemy engine with dialect-appropriate options.
 
     SQLite keeps check_same_thread=False (FastAPI threadpool shares the file
-    connection). PostgreSQL uses pool_pre_ping for dropped-connection
-    resilience. No SQLite-specific connect_args leak into other dialects.
+    connection). PostgreSQL uses pool_pre_ping, pool_size, max_overflow,
+    pool_recycle, and pool_timeout for production stability.
     """
+    from config import settings
     url = url or DATABASE_URL
     if _is_sqlite(url):
         return create_engine(
@@ -44,7 +45,21 @@ def create_database_engine(url: str = None):
     return create_engine(
         url,
         pool_pre_ping=True,
+        pool_size=settings.db_pool_size,
+        max_overflow=settings.db_max_overflow,
+        pool_recycle=settings.db_pool_recycle,
+        pool_timeout=settings.db_pool_timeout,
     )
+
+
+def ping_database() -> bool:
+    """Check whether the active database responds to a simple query."""
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1;"))
+            return True
+    except Exception:
+        return False
 
 
 engine = create_database_engine(DATABASE_URL)

@@ -47,7 +47,9 @@ def get_db_status(db: Session = Depends(get_db)):
 
 
 from typing import Optional
+from config import settings
 from database import engine
+from services.auth import get_current_user
 
 @router.post("/admin/reset-db", summary="Hard reset database to clean empty state")
 @router.post("/admin/reset-database", summary="Hard reset database to clean empty state")
@@ -55,12 +57,25 @@ def reset_database(
     confirm: bool = False,
     payload: Optional[dict] = None,
     db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
 ):
     """
     Completely deletes all records from reports, actions, reviews, and uploaded_files tables,
     resets SQLite sequences, clears in-memory caches, runs VACUUM, and logs the reset event.
     Requires confirmation flag (?confirm=true or body {"confirm": true}).
+    Requires Administrator privileges in all environments; permanently blocked in production unless ALLOW_ADMIN_RESET=true.
     """
+    if (user.get("role") or "").lower() != "administrator":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access forbidden: Admin reset requires Administrator role.",
+        )
+
+    if settings.is_production and not settings.allow_admin_reset:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Database reset is permanently disabled in production environments. Set ALLOW_ADMIN_RESET=true for emergency reset.",
+        )
     is_confirmed = confirm or (payload and payload.get("confirm") is True)
     if not is_confirmed:
         raise HTTPException(

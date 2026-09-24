@@ -1,0 +1,35 @@
+FROM python:3.11-slim
+
+# Create unprivileged system user & group
+RUN groupadd -g 10001 safesense && \
+    useradd -u 10001 -g safesense -s /bin/bash -m safesense
+
+WORKDIR /app
+
+# Install curl for container health checks
+RUN apt-get update && apt-get install -y --no-install-recommends curl && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt ./
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+# Set permissions for non-root runtime
+RUN mkdir -p logs && \
+    chown -R safesense:safesense /app
+
+USER safesense
+
+ENV PYTHONUNBUFFERED=1 \
+    SAFESENSE_ENV=production \
+    PORT=8000 \
+    WORKERS=2
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=20s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8000/api/health || exit 1
+
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT} --workers ${WORKERS} --proxy-headers --forwarded-allow-ips '*'"]

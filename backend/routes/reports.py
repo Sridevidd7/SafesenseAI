@@ -248,12 +248,19 @@ async def upload_csv(
             ),
         )
 
-    # ── Read bytes ────────────────────────────────────────────────────────────
+    # ── Read bytes & enforce file size limit ──────────────────────────────────
+    from config import settings
     raw_bytes = await file.read()
     if len(raw_bytes) == 0:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Uploaded file is empty (0 bytes).",
+        )
+    if len(raw_bytes) > settings.max_upload_size_bytes:
+        max_mb = settings.max_upload_size_bytes // (1024 * 1024)
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File size exceeds maximum allowed upload limit ({max_mb} MB).",
         )
 
     # ── Delegate to service layer ─────────────────────────────────────────────
