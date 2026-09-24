@@ -273,9 +273,10 @@ class TestAlembicBaselineConsistency(unittest.TestCase):
 
     def test_all_model_tables_present_in_metadata(self):
         from database import Base
+        # Phase 6 Batch 2 adds report_embeddings (vector-ready, no safety fields)
         self.assertEqual(
             set(Base.metadata.tables.keys()),
-            {"reports", "actions", "reviews", "uploaded_files"},
+            {"reports", "actions", "reviews", "uploaded_files", "report_embeddings"},
         )
 
     def test_alembic_baseline_file_exists_and_covers_tables(self):
@@ -293,6 +294,8 @@ class TestAlembicBaselineConsistency(unittest.TestCase):
                 baseline = content
                 break
         self.assertIsNotNone(baseline, "no baseline migration (down_revision=None) found")
+        # Baseline covers the pre-Batch-2 tables; report_embeddings arrives in
+        # the follow-up migration (e5d4d8238ea9)
         for table in ("reports", "actions", "reviews", "uploaded_files"):
             self.assertIn(f"create_table('{table}'", baseline, f"baseline missing {table}")
         # Unique content_hash constraint from the dedup feature must be present
@@ -333,7 +336,11 @@ class TestAlembicBaselineConsistency(unittest.TestCase):
                     )
                 }
                 tables.discard("alembic_version")
-                self.assertEqual(tables, {"reports", "actions", "reviews", "uploaded_files"})
+                # Phase 6 Batch 2: report_embeddings is part of the migrated schema
+                self.assertEqual(
+                    tables,
+                    {"reports", "actions", "reviews", "uploaded_files", "report_embeddings"},
+                )
             finally:
                 con.close()
 
