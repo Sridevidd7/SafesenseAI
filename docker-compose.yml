@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   frontend:
     build:
@@ -20,6 +18,34 @@ services:
       - "8000:8000"
     environment:
       - PYTHONUNBUFFERED=1
+      # Optional: set DATABASE_URL (and start the postgres profile) to run the
+      # backend against PostgreSQL instead of the default SQLite file database.
+      # When unset, the backend uses SQLite at /app/safety.db (local/demo mode).
+      # - DATABASE_URL=postgresql+psycopg://safesense:safesense@postgres:5432/safesense
+
+  # ─── Optional PostgreSQL (pgvector-capable) ────────────────────────────────
+  # NOT part of the default stack. Start with:
+  #   docker compose --profile postgres up -d postgres
+  # Then point the backend at it via DATABASE_URL (see backend/.env.example).
+  # Credentials are developer defaults supplied via environment variables —
+  # override POSTGRES_USER / POSTGRES_PASSWORD locally; production secrets
+  # management is Phase 7 scope and is intentionally not handled here.
+  postgres:
+    image: pgvector/pgvector:pg16
+    profiles: ["postgres"]
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-safesense}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-safesense}
+      - POSTGRES_DB=${POSTGRES_DB:-safesense}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-safesense} -d ${POSTGRES_DB:-safesense}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 volumes:
   pgdata:

@@ -12,6 +12,7 @@ Guarantees:
 from __future__ import annotations
 
 import logging
+import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta, date
@@ -110,6 +111,19 @@ def get_sif_count(db: Session) -> dict[str, Any]:
     return result
 
 
+def _month_key(date_str: str) -> str | None:
+    """
+    Extract a 'YYYY-MM' key from a stored date string.
+    Report dates are stored as free-form strings; only well-formed
+    YYYY-MM-DD prefixes group into monthly buckets (deterministic, portable
+    across SQLite and PostgreSQL — no strftime dependency).
+    """
+    if not date_str:
+        return None
+    m = str(date_str).strip()[:7]
+    return m if re.match(r"^\d{4}-\d{2}$", m) else None
+
+
 def get_monthly_trends(db: Session) -> list[dict[str, Any]]:
     """Compute monthly risk and precursor trends from reports."""
     total_count = get_total_reports(db)
@@ -118,29 +132,32 @@ def get_monthly_trends(db: Session) -> list[dict[str, Any]]:
         print("Trend rows: []")
         return []
 
-    sql = text("""
-        SELECT
-            strftime('%Y-%m', date) as month,
-            COUNT(*) as total_reports,
-            SUM(CASE WHEN UPPER(sif_potential)='YES' THEN 1 ELSE 0 END) as sif,
-            SUM(CASE WHEN UPPER(risk_level)='CRITICAL' THEN 1 ELSE 0 END) as critical
-        FROM reports
-        WHERE date IS NOT NULL AND date != ''
-        GROUP BY month
-        ORDER BY month ASC;
-    """)
-    rows = db.execute(sql).fetchall()
-    results: list[dict[str, Any]] = []
+    # Portable month bucketing: aggregate well-formed YYYY-MM-DD dates in
+    # Python (mirrors copilot_retrieval.get_scoped_monthly_trend). Avoids
+    # SQLite's strftime() so the same logic runs on PostgreSQL unchanged.
+    rows = db.query(Report.date, Report.sif_potential, Report.risk_level).all()
 
-    for r in rows:
-        m = r[0]
-        if m:
-            results.append({
-                "month":    str(m),
-                "total":    int(r[1] or 0),
-                "sif":      int(r[2] or 0),
-                "critical": int(r[3] or 0),
-            })
+    buckets: dict[str, dict[str, int]] = {}
+    for r_date, r_sif, r_level in rows:
+        month = _month_key(r_date)
+        if month is None:
+            continue
+        bucket = buckets.setdefault(month, {"total": 0, "sif": 0, "critical": 0})
+        bucket["total"] += 1
+        if str(r_sif or "").upper() == "YES":
+            bucket["sif"] += 1
+        if str(r_level or "").upper() == "CRITICAL":
+            bucket["critical"] += 1
+
+    results: list[dict[str, Any]] = [
+        {
+            "month":    month,
+            "total":    buckets[month]["total"],
+            "sif":      buckets[month]["sif"],
+            "critical": buckets[month]["critical"],
+        }
+        for month in sorted(buckets.keys())
+    ]
 
     # If date strings could not be grouped by strftime (e.g. non-standard date format),
     # aggregate them into an overall monthly window rather than returning empty

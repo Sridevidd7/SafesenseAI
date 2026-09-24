@@ -4,8 +4,39 @@ Each class maps directly to a database table.
 """
 from datetime import datetime, timezone
 from sqlalchemy import Column, Index, Integer, String, Text, DateTime, ForeignKey
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, backref
 from database import Base
+
+# Phase 6: pgvector support is optional at runtime. The declarative Vector type
+# is only attached when pgvector is importable AND the configured database is
+# PostgreSQL; SQLite metadata stays fully loadable without pgvector installed.
+try:  # pragma: no cover - import guard exercised indirectly by tests
+    from pgvector.sqlalchemy import Vector  # type: ignore
+    _PGVECTOR_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    Vector = None
+    _PGVECTOR_AVAILABLE = False
+
+
+def _embedding_column_type():
+    """
+    Return the SQLAlchemy type for the embedding column.
+
+    - PostgreSQL + pgvector available -> pgvector.sqlalchemy.Vector(768)
+      (true vector type, indexable via pgvector HNSW in migrations)
+    - otherwise (SQLite, or pgvector missing) -> Text placeholder so the ORM
+      metadata stays importable; the real vector type is created by the
+      Alembic migration on PostgreSQL.
+    """
+    from database import IS_SQLITE
+    if _PGVECTOR_AVAILABLE and not IS_SQLITE:
+        return Vector(EMBEDDING_DIMENSION)
+    return Text
+
+
+# Canonical embedding dimension for the infrastructure (model-agnostic; the
+# actual model is intentionally NOT part of this batch).
+EMBEDDING_DIMENSION = 768
 
 
 class Report(Base):
@@ -145,5 +176,55 @@ class UploadedFile(Base):
 
     def __repr__(self) -> str:
         return f"<UploadedFile id={self.id} hash={self.file_hash[:8]}... name={self.filename!r}>"
+
+
+class ReportEmbedding(Base):
+    """
+    Phase 6: vector representation of a report description (pgvector-backed).
+
+    SAFETY BOUNDARY: this table stores ONLY the association to a report and the
+    opaque embedding vector. It must NEVER contain safety attributes (risk
+    level, risk score, SIF potential, barrier failures, life-saving rules,
+    temporal state, or any derived safety classification). Vector similarity
+    is advisory metadata for retrieval/search/pattern-candidate discovery;
+    all safety decisions remain exclusively deterministic (reports table +
+    deterministic engines).
+
+    model_id versioning allows multiple embedding models/dimensions to coexist;
+    uniqueness of (report_id, model_id) guarantees one vector per model.
+    """
+    __tablename__ = "report_embeddings"
+
+    report_id   = Column(String(64), ForeignKey("reports.report_id", ondelete="CASCADE"), nullable=False, index=True, primary_key=True)
+    model_id    = Column(String(128), nullable=False, index=True, primary_key=True)
+    # Real vector type on PostgreSQL (Vector(768)); Text placeholder on SQLite.
+    embedding   = Column(_embedding_column_type(), nullable=True)
+    dim         = Column(Integer, nullable=False, default=EMBEDDING_DIMENSION)  # explicit dimension guard/metadata
+    created_at  = Column(
+        DateTime,
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    __table_args__ = (
+        # Composite PK (report_id, model_id) enforces one vector per model;
+        # named unique index documents that contract explicitly.
+        Index("uq_report_embeddings_report_model", "report_id", "model_id", unique=True),
+    )
+
+    # Relationship to Report. passive_deletes on both sides lets the
+    # database-level ON DELETE CASCADE remove embedding rows (the ORM must
+    # not attempt to null the composite primary key on parent deletion).
+    report = relationship(
+        "Report",
+        backref=backref("embeddings", passive_deletes=True),
+        passive_deletes=True,
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<ReportEmbedding report_id={self.report_id!r} model_id={self.model_id!r} "
+            f"dim={self.dim}>"
+        )
 
 

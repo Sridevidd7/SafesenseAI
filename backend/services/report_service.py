@@ -235,6 +235,21 @@ def insert_report(
         f"[{datetime.now(timezone.utc).isoformat()}] EVENT=ingestion_report_created "
         f"REPORT_ID={new_report.report_id} HASH={c_hash[:8]}... LEVEL={effective_level} SIF={analysis['sif_potential']}"
     )
+
+    # Phase 6 Batch 2: optional embedding-persistence hook (default OFF via
+    # SAFESENSE_EMBEDDINGS). Purely advisory infrastructure; it never alters
+    # the report row, analysis, risk, or SIF outputs, and degrades to a no-op
+    # when disabled. See services/vector_store.py for the safety boundary.
+    try:
+        from services.vector_store import queue_embedding_on_ingest
+        queue_embedding_on_ingest(new_report.report_id, description)
+    except Exception as exc:
+        # Vector infrastructure must never affect deterministic ingestion.
+        logger.warning(
+            f"[{datetime.now(timezone.utc).isoformat()}] EVENT=embedding_hook_skipped "
+            f"REPORT_ID={new_report.report_id} REASON={exc}"
+        )
+
     return new_report, True
 
 

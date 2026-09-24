@@ -3,6 +3,12 @@ uvicorn[standard]==0.24.0
 python-multipart==0.0.6
 pydantic==2.5.0
 sqlalchemy==2.0.23
+
+# ─── Phase 6: PostgreSQL / migration foundation ───────────────────────────────
+# Schema migrations (canonical for PostgreSQL; SQLite uses legacy bootstrap)
+alembic>=1.12
+# PostgreSQL driver (only required when DATABASE_URL points at PostgreSQL)
+psycopg[binary]>=3.1
 pandas==2.1.3
 numpy==1.26.2
 scikit-learn==1.3.2
