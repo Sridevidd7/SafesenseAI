@@ -107,6 +107,10 @@ export interface ReportAnalysis {
   raw_score?: number;
   normalized_score?: number;
   normalization_applied?: boolean;
+  safety_concepts?: string[];
+  structured_evidence?: StructuredEvidenceItem[];
+  factor_breakdown?: Record<string, FactorBreakdownDetail>;
+  barrier_evidence?: BarrierEvidenceDetail[];
   risk_factors: RiskFactor[];
   recommended_actions: string[];
   similar_report_ids: string[];
@@ -118,12 +122,40 @@ export interface ReportAnalysis {
   redacted_text?: string;
 }
 
+export interface StructuredEvidenceItem {
+  concept: string;
+  source_phrase: string;
+  evidence_type: string;
+  state: 'ACTIVE_VIOLATION' | 'PREVENTED' | 'POSITIVE_CONTROL' | 'CONTEXT_ONLY' | string;
+  related_barrier?: string | null;
+  related_rule?: string | null;
+}
+
+export interface FactorBreakdownDetail {
+  name: string;
+  score: number;
+  max_score: number;
+  reason?: string;
+  evidence?: string[];
+}
+
+export interface BarrierEvidenceDetail {
+  barrier: string;
+  confidence_score?: number;
+  confidence?: number;
+  method?: string;
+  evidence?: string[];
+  detection_reason?: string;
+  confidence_level?: string;
+}
 
 export interface RiskFactor {
   name: string;
   score: number;
   max_score: number;
-  description: string;
+  description?: string;
+  reason?: string;
+  evidence?: string[];
 }
 
 export interface DatasetInfo {

@@ -1,40 +1,111 @@
 import { RiskLevel, SIFPotential } from '../types';
+import { AlertOctagon, AlertTriangle, ShieldCheck, ShieldAlert, CheckCircle2, HelpCircle } from 'lucide-react';
 
 interface RiskBadgeProps {
-  level: RiskLevel;
+  level: RiskLevel | string;
   size?: 'sm' | 'md' | 'lg';
+  showIcon?: boolean;
+  className?: string;
 }
 
-export function RiskBadge({ level, size = 'md' }: RiskBadgeProps) {
-  const sizeClass = size === 'sm' ? 'px-2 py-0.5 text-xs' : size === 'lg' ? 'px-3.5 py-1 text-sm' : 'px-2.5 py-0.5 text-xs';
-  const cls: Record<RiskLevel, string> = {
-    CRITICAL: 'bg-red-50 text-red-700 border border-red-200',
-    HIGH:     'bg-orange-50 text-orange-700 border border-orange-200',
-    MEDIUM:   'bg-amber-50 text-amber-700 border border-amber-200',
-    LOW:      'bg-green-50 text-green-700 border border-green-200',
+export function RiskBadge({ level, size = 'md', showIcon = true, className = '' }: RiskBadgeProps) {
+  const normLevel = (level || 'LOW').toUpperCase() as RiskLevel;
+
+  const sizeClass =
+    size === 'sm'
+      ? 'px-2 py-0.5 text-[11px]'
+      : size === 'lg'
+      ? 'px-3 py-1 text-sm'
+      : 'px-2.5 py-0.5 text-xs';
+
+  const iconSize = size === 'sm' ? 'w-3 h-3' : size === 'lg' ? 'w-4 h-4' : 'w-3.5 h-3.5';
+
+  const config: Record<RiskLevel, { cls: string; icon: typeof AlertTriangle; label: string }> = {
+    CRITICAL: {
+      cls: 'bg-red-50 text-red-800 border-red-300 font-bold',
+      icon: AlertOctagon,
+      label: 'CRITICAL',
+    },
+    HIGH: {
+      cls: 'bg-orange-50 text-orange-800 border-orange-300 font-bold',
+      icon: AlertTriangle,
+      label: 'HIGH',
+    },
+    MEDIUM: {
+      cls: 'bg-amber-50 text-amber-900 border-amber-300 font-semibold',
+      icon: ShieldAlert,
+      label: 'MEDIUM',
+    },
+    LOW: {
+      cls: 'bg-emerald-50 text-emerald-800 border-emerald-300 font-medium',
+      icon: ShieldCheck,
+      label: 'LOW',
+    },
   };
+
+  const item = config[normLevel] || config.LOW;
+  const Icon = item.icon;
+
   return (
-    <span className={`${cls[level]} ${sizeClass} rounded-full font-semibold uppercase tracking-wide inline-flex items-center`}>
-      {level}
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border shadow-2xs ${item.cls} ${sizeClass} uppercase tracking-wider ${className}`}
+      aria-label={`Risk Level: ${item.label}`}
+    >
+      {showIcon && <Icon className={`${iconSize} shrink-0`} aria-hidden="true" />}
+      <span>{item.label}</span>
     </span>
   );
 }
 
 interface SIFBadgeProps {
-  potential: SIFPotential;
+  potential: SIFPotential | string;
   size?: 'sm' | 'md' | 'lg';
+  showIcon?: boolean;
+  className?: string;
 }
-export function SIFBadge({ potential, size = 'md' }: SIFBadgeProps) {
-  const sizeClass = size === 'sm' ? 'px-2 py-0.5 text-xs' : size === 'lg' ? 'px-3.5 py-1 text-sm' : 'px-2.5 py-0.5 text-xs';
-  const cls: Record<SIFPotential, string> = {
-    YES:     'bg-red-50 text-red-700 border border-red-200',
-    NO:      'bg-green-50 text-green-700 border border-green-200',
-    UNKNOWN: 'bg-slate-100 text-slate-600 border border-slate-200',
+
+export function SIFBadge({ potential, size = 'md', showIcon = true, className = '' }: SIFBadgeProps) {
+  const normPotential = (potential || 'NO').toUpperCase() as SIFPotential;
+
+  const sizeClass =
+    size === 'sm'
+      ? 'px-2 py-0.5 text-[11px]'
+      : size === 'lg'
+      ? 'px-3 py-1 text-sm'
+      : 'px-2.5 py-0.5 text-xs';
+
+  const iconSize = size === 'sm' ? 'w-3 h-3' : size === 'lg' ? 'w-4 h-4' : 'w-3.5 h-3.5';
+
+  const config: Record<SIFPotential, { cls: string; icon: typeof AlertTriangle; label: string }> = {
+    YES: {
+      cls: 'bg-red-100 text-red-900 border-red-300 font-extrabold',
+      icon: AlertOctagon,
+      label: 'SIF POTENTIAL',
+    },
+    NO: {
+      cls: 'bg-slate-100 text-slate-700 border-slate-300 font-medium',
+      icon: CheckCircle2,
+      label: 'NON-SIF',
+    },
+    UNKNOWN: {
+      cls: 'bg-slate-100 text-slate-600 border-slate-300 font-normal',
+      icon: HelpCircle,
+      label: 'SIF UNVERIFIED',
+    },
   };
+
+  const item = config[normPotential] || config.UNKNOWN;
+  const Icon = item.icon;
+
   return (
-    <span className={`${cls[potential]} ${sizeClass} rounded-full font-bold uppercase tracking-wider inline-flex items-center gap-1`}>
-      {potential === 'YES' && <span className="w-1.5 h-1.5 rounded-full bg-red-600 inline-block animate-pulse" />}
-      SIF: {potential}
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border shadow-2xs ${item.cls} ${sizeClass} uppercase tracking-wider ${className}`}
+      aria-label={`SIF Classification: ${item.label}`}
+    >
+      {showIcon && <Icon className={`${iconSize} shrink-0`} aria-hidden="true" />}
+      <span>{item.label}</span>
     </span>
   );
 }
+
+export default RiskBadge;

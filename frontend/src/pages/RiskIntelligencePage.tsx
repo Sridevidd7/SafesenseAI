@@ -1,22 +1,51 @@
+/**
+ * RiskIntelligencePage.tsx — SafeSense AI Risk Intelligence & Operational Trajectory
+ *
+ * Sourced directly from backend endpoints:
+ * - GET /api/reports (stored observations)
+ * - GET /api/risk-intelligence/trends (monthly time-series, trajectory & statistical anomalies)
+ */
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Legend } from 'recharts';
-import { AlertTriangle, TrendingUp, Activity, RefreshCw, Database, ShieldAlert, Sparkles } from 'lucide-react';
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  LineChart, Line, Legend
+} from 'recharts';
+import {
+  AlertTriangle, TrendingUp, TrendingDown, Minus, Activity, RefreshCw,
+  Database, ShieldAlert, Sparkles, AlertOctagon, MapPin, Calendar, Info
+} from 'lucide-react';
+
 import EmptyState from '../components/EmptyState';
-import { fetchReports, fetchTrendsIntelligence, ApiReport, TrendPoint } from '../services/api';
-import { computeEarlyWarnings, computeBarrierFailures, detectBarrierFailure } from '../utils/riskEngine';
+import ErrorState from '../components/ErrorState';
+import { RiskBadge, SIFBadge } from '../components/RiskBadge';
+import KpiCard from '../components/KpiCard';
+
+import {
+  fetchReports,
+  fetchTrendsIntelligence,
+  ApiReport,
+  TrendPoint,
+  PatternAnomaly,
+  AIInsight,
+} from '../services/api';
+
+import { computeBarrierFailures, detectBarrierFailure } from '../utils/riskEngine';
 import { SafetyReport, RiskLevel, SIFPotential } from '../types';
 
 export default function RiskIntelligencePage() {
   const [reports, setReports] = useState<ApiReport[]>([]);
   const [trends, setTrends] = useState<TrendPoint[]>([]);
+  const [anomalies, setAnomalies] = useState<PatternAnomaly[]>([]);
+  const [insights, setInsights] = useState<AIInsight[]>([]);
   const [trendStatus, setTrendStatus] = useState<string>('STABLE');
   const [trendReason, setTrendReason] = useState<string>('');
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshToast, setRefreshToast] = useState(false);
 
-  // ─── Fetch reports and trends from backend API ──────────────────────────────
+  // ── Fetch Data ────────────────────────────────────────────────────────────
   const loadReports = useCallback(async (isInitial = false) => {
     if (isInitial) {
       setLoading(true);
@@ -28,7 +57,13 @@ export default function RiskIntelligencePage() {
     try {
       const [reportsRes, trendsRes] = await Promise.all([
         fetchReports(),
-        fetchTrendsIntelligence().catch(() => ({ data: [], trend: 'STABLE', trend_reason: '', anomalies: [], insights: [] })),
+        fetchTrendsIntelligence().catch(() => ({
+          data: [],
+          trend: 'STABLE',
+          trend_reason: 'Trend calculation available with historical time-series.',
+          anomalies: [],
+          insights: [],
+        })),
       ]);
 
       const rawList: ApiReport[] =
@@ -40,13 +75,16 @@ export default function RiskIntelligencePage() {
       setTrends(trendsRes.data || []);
       setTrendStatus(trendsRes.trend || 'STABLE');
       setTrendReason(trendsRes.trend_reason || '');
+      setAnomalies(trendsRes.anomalies || []);
+      setInsights(trendsRes.insights || []);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to fetch safety intelligence data';
-      console.error('Risk Intelligence fetch error:', err);
       setError(msg);
       if (isInitial) {
         setReports([]);
         setTrends([]);
+        setAnomalies([]);
+        setInsights([]);
       }
     } finally {
       setLoading(false);
@@ -58,23 +96,20 @@ export default function RiskIntelligencePage() {
     loadReports(true);
   }, [loadReports]);
 
-  // Listen for global data updates (e.g. after CSV upload or reset)
+  // Listen for global data updates
   useEffect(() => {
-    const handleUpdate = () => {
-      loadReports(false);
-    };
+    const handleUpdate = () => loadReports(false);
     window.addEventListener('safesense:data-updated', handleUpdate);
     return () => window.removeEventListener('safesense:data-updated', handleUpdate);
   }, [loadReports]);
 
-  // ─── Refresh Button Handler ────────────────────────────────────────────────
   const handleRefresh = async () => {
     await loadReports(false);
     setRefreshToast(true);
     setTimeout(() => setRefreshToast(false), 3000);
   };
 
-  // ─── Map API reports to SafetyReport schema ─────────────────────────────────
+  // ── Mapped Reports Schema ─────────────────────────────────────────────────
   const mappedReports: SafetyReport[] = useMemo(() => {
     return reports.map(r => {
       const repId = r.report_id || String(r.id || '');
@@ -94,15 +129,14 @@ export default function RiskIntelligencePage() {
     });
   }, [reports]);
 
-  // ─── Computed Intelligence Metrics ──────────────────────────────────────────
-  const warnings = useMemo(() => computeEarlyWarnings(mappedReports), [mappedReports]);
+  // Failed barrier frequencies
   const barriers = useMemo(() => computeBarrierFailures(mappedReports), [mappedReports]);
 
-  // Monthly trend: Prefer backend SQLite aggregation, fallback to mapped reports
+  // Monthly trend: Use backend SQLite aggregation
   const monthlyData = useMemo(() => {
-    if (trends && trends.length > 0) {
-      return trends;
-    }
+    if (trends && trends.length > 0) return trends;
+
+    // Fallback if trends API returned empty array
     const monthly: Record<string, { month: string; total: number; sif: number; critical: number }> = {};
     for (const r of mappedReports) {
       if (!r.date) continue;
@@ -110,13 +144,12 @@ export default function RiskIntelligencePage() {
       if (!monthly[month]) monthly[month] = { month, total: 0, sif: 0, critical: 0 };
       monthly[month].total++;
       if (r.sif_potential === 'YES') monthly[month].sif++;
-      if (r.risk_level === 'CRITICAL') {
-        monthly[month].critical++;
-      }
+      if (r.risk_level === 'CRITICAL') monthly[month].critical++;
     }
     return Object.values(monthly).sort((a, b) => a.month.localeCompare(b.month));
   }, [trends, mappedReports]);
 
+  // Life-Saving Rule distribution
   const lsrData = useMemo(() => {
     const counts: Record<string, { name: string; total: number; sif: number }> = {};
     for (const r of mappedReports) {
@@ -128,61 +161,87 @@ export default function RiskIntelligencePage() {
     return Object.values(counts).sort((a, b) => b.total - a.total).slice(0, 8);
   }, [mappedReports]);
 
-  // ─── Loading State ─────────────────────────────────────────────────────────
-  if (loading) {
+  // Underlying time period
+  const periodRange = useMemo(() => {
+    if (monthlyData.length === 0) return null;
+    const first = monthlyData[0].month;
+    const last = monthlyData[monthlyData.length - 1].month;
+    return first === last ? first : `${first} — ${last}`;
+  }, [monthlyData]);
+
+  // Aggregate metrics
+  const sifCount = useMemo(() => {
+    return reports.filter(r => String(r.sif_potential).toUpperCase() === 'YES').length;
+  }, [reports]);
+
+  const criticalCount = useMemo(() => {
+    return reports.filter(r => String(r.risk_level).toUpperCase() === 'CRITICAL').length;
+  }, [reports]);
+
+  // ── Loading State ─────────────────────────────────────────────────────────
+  if (loading && reports.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-28 space-y-4">
         <span className="w-8 h-8 border-3 border-blue-600/30 border-t-blue-600 rounded-full animate-spin" />
-        <p className="text-sm font-semibold text-slate-600">Loading Risk Intelligence metrics...</p>
+        <p className="text-sm font-semibold text-slate-700">Loading Risk Intelligence &amp; Trajectory...</p>
       </div>
     );
   }
 
-  // ─── Error State ───────────────────────────────────────────────────────────
+  // ── Error State ───────────────────────────────────────────────────────────
   if (error && reports.length === 0) {
     return (
-      <div className="card border-red-200 bg-red-50/50 p-8 text-center max-w-lg mx-auto my-12 space-y-4">
-        <ShieldAlert className="w-12 h-12 text-red-500 mx-auto" />
-        <h3 className="text-lg font-bold text-slate-900">Failed to Load Risk Intelligence</h3>
-        <p className="text-xs text-red-700">{error}</p>
-        <button onClick={() => loadReports(true)} className="btn-primary mx-auto text-xs">
-          <RefreshCw className="w-3.5 h-3.5" /> Retry
-        </button>
+      <div className="py-8">
+        <ErrorState
+          title="Failed to Load Risk Intelligence"
+          message={error}
+          hint="Make sure the backend is running and the database has valid report records."
+          onRetry={() => loadReports(true)}
+          retrying={loading}
+        />
       </div>
     );
   }
 
-  // ─── Empty State ───────────────────────────────────────────────────────────
-  if (!loading && (!reports || reports.length === 0)) {
+  // ── Empty State ───────────────────────────────────────────────────────────
+  if (!loading && reports.length === 0) {
     return (
       <EmptyState
         title="No Safety Data Available"
-        message="Upload a dataset to generate early warnings, barrier failure analytics, and risk trend metrics."
+        message="Upload an incident dataset to generate trajectory analysis, statistical anomaly spikes, and barrier breakdown."
       />
     );
   }
 
   return (
-    <div className="space-y-8 animate-in">
-      {/* Toast notification */}
+    <div className="space-y-8 animate-in relative">
+      {/* Toast Notification */}
       {refreshToast && (
-        <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white text-xs font-semibold px-4 py-2.5 rounded-xl shadow-xl flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2">
+        <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white text-xs font-semibold px-4 py-2.5 rounded-xl shadow-xl flex items-center gap-2 border border-slate-700 animate-in fade-in slide-in-from-bottom-2">
           <Sparkles className="w-4 h-4 text-emerald-400" />
-          Risk Intelligence updated with latest database records
+          <span>Risk Intelligence refreshed with latest records</span>
         </div>
       )}
 
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="section-title">Risk Intelligence</h1>
+          <div className="flex items-center gap-2.5 mb-1">
+            <h1 className="section-title">Risk Intelligence &amp; Trajectory</h1>
+            {periodRange && (
+              <span className="bg-slate-100 text-slate-700 border border-slate-200 text-xs font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1.5">
+                <Calendar className="w-3 h-3 text-slate-500" />
+                {periodRange}
+              </span>
+            )}
+          </div>
           <p className="section-sub">
-            Early warnings, barrier failure analysis, and risk trends derived from {reports.length} stored safety reports.
+            Historical trajectory, statistical anomaly detection, and barrier failure intelligence across {reports.length} safety reports.
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="text-xs text-slate-500 bg-slate-100 px-3 py-1.5 rounded-lg font-medium border border-slate-200 flex items-center gap-1.5">
+        <div className="flex items-center gap-2.5">
+          <div className="text-xs text-slate-600 bg-white px-3 py-1.5 rounded-lg font-medium border border-slate-200 shadow-2xs flex items-center gap-1.5">
             <Database className="w-3.5 h-3.5 text-blue-600" />
             <span>{reports.length} Records Analyzed</span>
           </div>
@@ -194,78 +253,95 @@ export default function RiskIntelligencePage() {
             title="Refresh analytics from SQLite database"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-blue-600' : ''}`} />
-            {refreshing ? 'Refreshing...' : 'Refresh'}
+            <span>{refreshing ? 'Refreshing...' : 'Refresh'}</span>
           </button>
         </div>
       </div>
 
-      {/* ─── Early Warnings Section ────────────────────────────────────────── */}
-      <section>
-        <h2 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 text-red-600" /> Early Warning Center
-        </h2>
-        {warnings.length === 0 ? (
-          <div className="card text-slate-600 text-sm bg-slate-50/60 border-slate-200">
-            No critical risk concentrations or recurring precursor thresholds exceeded in the current dataset.
+      {/* KPI Cards Strip */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <KpiCard
+          label="Total Reports"
+          value={reports.length}
+          subtext="Stored in SQLite"
+          icon={Database}
+          variant="blue"
+        />
+
+        <KpiCard
+          label="SIF Precursors"
+          value={sifCount}
+          subtext={`${((sifCount / (reports.length || 1)) * 100).toFixed(1)}% of dataset`}
+          icon={AlertOctagon}
+          variant="red"
+          badge="SIF: YES"
+        />
+
+        <KpiCard
+          label="Critical Severity"
+          value={criticalCount}
+          subtext="Highest priority incidents"
+          icon={AlertTriangle}
+          variant="orange"
+          badge="CRITICAL"
+        />
+
+        <KpiCard
+          label="Statistical Trajectory"
+          value={trendStatus}
+          subtext={periodRange ? `Period: ${periodRange}` : 'Overall trajectory'}
+          icon={trendStatus === 'RISING RISK' ? TrendingUp : trendStatus === 'IMPROVING' ? TrendingDown : Minus}
+          variant={trendStatus === 'RISING RISK' ? 'red' : trendStatus === 'IMPROVING' ? 'emerald' : 'slate'}
+          badge="TRAJECTORY"
+        />
+      </div>
+
+      {/* ── Statistical Anomaly Spikes Section (Real Backend Spikes) ─────────── */}
+      <section aria-labelledby="anomalies-heading" className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <AlertOctagon className="w-4 h-4 text-red-600" />
+            <h2 id="anomalies-heading" className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+              Statistical Anomaly Spikes ({anomalies.length})
+            </h2>
+          </div>
+          <span className="text-[11px] text-slate-500 font-medium">
+            Threshold: &gt;= 1.5x baseline volume
+          </span>
+        </div>
+
+        {anomalies.length === 0 ? (
+          <div className="card p-4 text-xs text-slate-600 bg-slate-50 border-slate-200 flex items-center gap-2">
+            <Info className="w-4 h-4 text-slate-400 shrink-0" />
+            <span>No statistical anomaly spikes (≥1.5x baseline) detected across current temporal series or operating facilities.</span>
           </div>
         ) : (
           <div className="grid sm:grid-cols-2 gap-4">
-            {warnings.map(w => (
+            {anomalies.map((anomaly, idx) => (
               <div
-                key={w.id}
-                className={`card border p-5 ${
-                  w.type === 'CRITICAL'
-                    ? 'border-red-200 bg-red-50/40'
-                    : w.type === 'WARNING'
-                    ? 'border-orange-200 bg-orange-50/40'
-                    : 'border-amber-200 bg-amber-50/40'
-                }`}
+                key={idx}
+                className="card border-red-200 bg-red-50/60 p-4 flex items-start gap-3.5 shadow-2xs"
               >
-                <div className="flex items-start gap-3.5">
-                  <div
-                    className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${
-                      w.type === 'CRITICAL'
-                        ? 'bg-red-100 text-red-700'
-                        : w.type === 'WARNING'
-                        ? 'bg-orange-100 text-orange-700'
-                        : 'bg-amber-100 text-amber-700'
-                    }`}
-                  >
-                    <AlertTriangle className="w-4 h-4" />
+                <div className="w-9 h-9 rounded-lg bg-red-100 text-red-700 flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <AlertOctagon className="w-4 h-4" />
+                </div>
+
+                <div className="space-y-1 flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="text-xs font-bold text-red-950 uppercase tracking-wider">
+                      {anomaly.type === 'TEMPORAL_SPIKE' ? 'Temporal Volume Spike' : 'Site Concentration Spike'}
+                    </span>
+                    <span className="text-[11px] font-bold bg-red-100 text-red-800 border border-red-300 px-2 py-0.5 rounded-full">
+                      {anomaly.ratio ? `${anomaly.ratio}x Baseline` : 'Spike'}
+                    </span>
                   </div>
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span
-                        className={`text-xs font-bold uppercase tracking-wider ${
-                          w.type === 'CRITICAL'
-                            ? 'text-red-700'
-                            : w.type === 'WARNING'
-                            ? 'text-orange-700'
-                            : 'text-amber-700'
-                        }`}
-                      >
-                        {w.type}
-                      </span>
-                    </div>
-                    <p className="font-bold text-slate-900 text-sm">{w.title}</p>
-                    <p className="text-slate-600 text-xs mt-1 leading-relaxed">{w.description}</p>
-                    {w.affected_sites && w.affected_sites.length > 0 && (
-                      <div className="mt-2.5 flex flex-wrap gap-1.5">
-                        {w.affected_sites.slice(0, 3).map(site => (
-                          <span
-                            key={site}
-                            className="text-xs bg-white text-slate-700 border border-slate-200 px-2.5 py-0.5 rounded-md shadow-2xs font-medium"
-                          >
-                            {site}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <div className="text-right flex-shrink-0">
-                    <div className="text-lg font-bold text-red-600">+{w.change_pct}%</div>
-                    <div className="text-xs text-slate-500 font-medium">vs baseline</div>
-                  </div>
+
+                  <p className="text-xs font-bold text-slate-900">
+                    Location: {anomaly.site || 'Global Operations'}
+                  </p>
+                  <p className="text-xs text-slate-700 leading-relaxed">
+                    {anomaly.reason}
+                  </p>
                 </div>
               </div>
             ))}
@@ -273,106 +349,122 @@ export default function RiskIntelligencePage() {
         )}
       </section>
 
-      {/* ─── Monthly Safety Trend ──────────────────────────────────────────── */}
+      {/* ── Monthly Safety Trend Trajectory ─────────────────────────────────── */}
       {monthlyData.length > 0 ? (
-        <section>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
-              <TrendingUp className="w-4 h-4 text-blue-600" /> Monthly Safety Trend
-            </h2>
+        <section aria-labelledby="trend-heading" className="space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <TrendingUp className="w-4 h-4 text-blue-600" />
+              <h2 id="trend-heading" className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                Monthly Safety Trajectory ({periodRange || 'Historical'})
+              </h2>
+            </div>
+
             <div className="flex items-center gap-2">
               <span
-                className={`text-xs font-bold px-2.5 py-1 rounded-md border ${
+                className={`text-xs font-bold px-2.5 py-1 rounded-md border flex items-center gap-1.5 ${
                   trendStatus === 'RISING RISK'
-                    ? 'bg-red-50 text-red-700 border-red-200'
+                    ? 'bg-red-50 text-red-800 border-red-300'
                     : trendStatus === 'IMPROVING'
-                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                    : 'bg-slate-50 text-slate-700 border-slate-200'
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                    : 'bg-slate-100 text-slate-800 border-slate-300'
                 }`}
               >
+                {trendStatus === 'RISING RISK' ? (
+                  <TrendingUp className="w-3.5 h-3.5 text-red-600" />
+                ) : trendStatus === 'IMPROVING' ? (
+                  <TrendingDown className="w-3.5 h-3.5 text-emerald-600" />
+                ) : (
+                  <Minus className="w-3.5 h-3.5 text-slate-600" />
+                )}
                 Trajectory: {trendStatus}
               </span>
             </div>
           </div>
+
           {trendReason && (
-            <div className="mb-3 p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-blue-600 shrink-0" />
-              <span>
-                <strong>AI Trend Assessment:</strong> {trendReason}
-              </span>
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 flex items-start gap-2.5">
+              <Sparkles className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+              <div className="leading-relaxed">
+                <strong className="text-slate-900 font-bold">Pattern Engine Trend Assessment: </strong>
+                <span>{trendReason}</span>
+              </div>
             </div>
           )}
-          <div className="card">
-            <ResponsiveContainer width="100%" height={260}>
-              <LineChart data={monthlyData}>
+
+          <div className="card p-5">
+            <ResponsiveContainer width="100%" height={270}>
+              <LineChart data={monthlyData} margin={{ top: 10, right: 20, left: -10, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
                 <XAxis dataKey="month" tick={{ fill: '#64748B', fontSize: 11 }} axisLine={{ stroke: '#E2E8F0' }} />
-                <YAxis tick={{ fill: '#64748B', fontSize: 11 }} axisLine={{ stroke: '#E2E8F0' }} />
+                <YAxis tick={{ fill: '#64748B', fontSize: 11 }} axisLine={{ stroke: '#E2E8F0' }} allowDecimals={false} />
                 <Tooltip
                   contentStyle={{
                     background: '#FFFFFF',
                     border: '1px solid #E2E8F0',
                     borderRadius: 8,
                     color: '#0F172A',
+                    fontSize: 12,
                     boxShadow: '0 4px 6px -1px rgba(0,0,0,0.08)',
                   }}
                 />
-                <Legend formatter={v => <span style={{ color: '#475569', fontSize: 12 }}>{v}</span>} />
+                <Legend formatter={v => <span style={{ color: '#475569', fontSize: 11, fontWeight: 600 }}>{v}</span>} />
                 <Line
                   type="monotone"
                   dataKey="total"
-                  stroke="#3B82F6"
+                  stroke="#2563EB"
                   name="Total Reports"
                   strokeWidth={2.5}
-                  dot={{ r: 3.5, fill: '#3B82F6' }}
+                  dot={{ r: 4, fill: '#2563EB' }}
                 />
                 <Line
                   type="monotone"
                   dataKey="sif"
-                  stroke="#EF4444"
+                  stroke="#DC2626"
                   name="SIF Potential"
                   strokeWidth={2.5}
-                  dot={{ r: 3.5, fill: '#EF4444' }}
+                  dot={{ r: 4, fill: '#DC2626' }}
                 />
                 <Line
                   type="monotone"
                   dataKey="critical"
-                  stroke="#F97316"
+                  stroke="#EA580C"
                   name="Critical Severity"
-                  strokeWidth={2.5}
-                  dot={{ r: 3.5, fill: '#F97316' }}
+                  strokeWidth={2}
+                  strokeDasharray="4 4"
+                  dot={{ r: 3.5, fill: '#EA580C' }}
                 />
               </LineChart>
             </ResponsiveContainer>
           </div>
         </section>
       ) : (
-        <div className="card text-slate-500 text-sm flex items-center gap-2 bg-slate-50">
+        <div className="card p-5 text-slate-500 text-xs flex items-center gap-2 bg-slate-50">
           <Activity className="w-4 h-4 text-slate-400" />
-          Trend analysis timeline will appear once date-indexed records are stored.
+          <span>Timeline trajectory will populate once date-indexed safety records are saved.</span>
         </div>
       )}
 
-      {/* ─── LSR Distribution & Barrier Failures ───────────────────────────── */}
+      {/* ── LSR Distribution & Barrier Failures ─────────────────────────────── */}
       <div className="grid lg:grid-cols-2 gap-6">
         {/* LSR Distribution */}
-        <section>
-          <h2 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">
-            Life-Saving Rule Distribution
+        <section aria-labelledby="lsr-dist-heading" className="space-y-3">
+          <h2 id="lsr-dist-heading" className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+            Life-Saving Rule Risk Distribution
           </h2>
-          <div className="card">
+          <div className="card p-5">
             {lsrData.length === 0 ? (
               <p className="text-xs text-slate-500 py-10 text-center">No categories identified.</p>
             ) : (
               <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={lsrData} layout="vertical" margin={{ left: 10, right: 20 }}>
+                <BarChart data={lsrData} layout="vertical" margin={{ left: 15, right: 20, top: 5, bottom: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" horizontal={false} />
                   <XAxis type="number" tick={{ fill: '#64748B', fontSize: 11 }} axisLine={{ stroke: '#E2E8F0' }} />
                   <YAxis
                     type="category"
                     dataKey="name"
-                    width={140}
-                    tick={{ fill: '#334155', fontSize: 11 }}
+                    width={150}
+                    tick={{ fill: '#334155', fontSize: 11, fontWeight: 500 }}
                     axisLine={{ stroke: '#E2E8F0' }}
                   />
                   <Tooltip
@@ -381,24 +473,24 @@ export default function RiskIntelligencePage() {
                       border: '1px solid #E2E8F0',
                       borderRadius: 8,
                       color: '#0F172A',
-                      boxShadow: '0 4px 6px -1px rgba(0,0,0,0.08)',
+                      fontSize: 12,
                     }}
                   />
-                  <Legend formatter={v => <span style={{ color: '#475569', fontSize: 12 }}>{v}</span>} />
-                  <Bar dataKey="total" fill="#3B82F6" name="Total Reports" radius={[0, 4, 4, 0]} />
-                  <Bar dataKey="sif" fill="#EF4444" name="SIF Potential" radius={[0, 4, 4, 0]} />
+                  <Legend formatter={v => <span style={{ color: '#475569', fontSize: 11, fontWeight: 600 }}>{v}</span>} />
+                  <Bar dataKey="total" fill="#2563EB" name="Total Reports" radius={[0, 4, 4, 0]} />
+                  <Bar dataKey="sif" fill="#DC2626" name="SIF Precursors" radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             )}
           </div>
         </section>
 
-        {/* Barrier Failures */}
-        <section>
-          <h2 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">
-            Failed Safety Barriers
+        {/* Failed Safety Barriers */}
+        <section aria-labelledby="barriers-heading" className="space-y-3">
+          <h2 id="barriers-heading" className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+            Failed Safety Barriers (Empirical Recurrence)
           </h2>
-          <div className="card">
+          <div className="card p-5">
             {barriers.length === 0 ? (
               <p className="text-xs text-slate-500 py-10 text-center">No barrier failures recorded.</p>
             ) : (
@@ -406,14 +498,14 @@ export default function RiskIntelligencePage() {
                 {barriers.slice(0, 8).map(b => (
                   <div key={b.barrier}>
                     <div className="flex justify-between text-xs mb-1">
-                      <span className="text-slate-800 font-medium truncate flex-1 mr-2">{b.barrier}</span>
-                      <span className="text-slate-500 flex-shrink-0 font-medium">
-                        {b.count} ({b.percentage}%)
+                      <span className="text-slate-800 font-bold truncate flex-1 mr-2">{b.barrier}</span>
+                      <span className="text-slate-500 flex-shrink-0 font-semibold">
+                        {b.count} reports ({b.percentage}%)
                       </span>
                     </div>
                     <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
                       <div
-                        className="h-full rounded-full bg-red-500 transition-all duration-700"
+                        className="h-full rounded-full bg-red-600 transition-all duration-700"
                         style={{ width: `${b.percentage}%` }}
                       />
                     </div>
@@ -423,6 +515,15 @@ export default function RiskIntelligencePage() {
             )}
           </div>
         </section>
+      </div>
+
+      {/* Causation vs Correlation Note */}
+      <div className="card p-4 bg-slate-50/80 border-slate-200 text-xs text-slate-600 flex items-start gap-2.5">
+        <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+        <div className="leading-relaxed">
+          <strong className="text-slate-800">Operational Decision Support Disclaimer: </strong>
+          Risk Intelligence distributions, trend trajectories, and anomaly spikes reflect empirical incident logs and statistical correlations. SafeSense AI provides prioritized precursor visibility for HSE officers and does not assert definitive root causes without formal on-site incident investigations.
+        </div>
       </div>
     </div>
   );
