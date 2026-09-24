@@ -675,6 +675,17 @@ def calculate_risk_score(report: Dict) -> Dict:
     is_high_hazard_lsr = any(a in lsr for a in ["Confined Space", "Energy Isolation", "Hot Work", "Working at Height"])
     is_standard_lsr = lsr != "General Safety"
 
+    no_exposure_match = EXPOSURE_ABSENT_OR_PREVENTED_REGEX.search(lower)
+    is_active_exposure = False
+    exposure_evidence = []
+    try:
+        from services.concept_extractor import extract_safety_concepts
+        c_info = extract_safety_concepts(lower)
+        is_active_exposure = c_info.get("exposure_detected", False)
+        exposure_evidence = c_info.get("exposure_evidence", [])
+    except Exception:
+        pass
+
     if neg_type in ("SAFE_PREVENTIVE", "PREVENTIVE_BEFORE_EXPOSURE"):
         # Safe preventive decision: Work was halted/avoided before exposure
         hazard_severity = 10 if is_standard_lsr else 3
@@ -749,14 +760,6 @@ def calculate_risk_score(report: Dict) -> Dict:
             barrier_score = min(35, 25 + (n_barriers - 1) * 5)
 
         # 3. Exposure (0-20)
-        no_exposure_match = EXPOSURE_ABSENT_OR_PREVENTED_REGEX.search(lower)
-        is_active_exposure = False
-        try:
-            from services.concept_extractor import extract_safety_concepts
-            is_active_exposure = extract_safety_concepts(lower).get("exposure_detected", False)
-        except Exception:
-            pass
-
         if no_exposure_match and neg_type != "UNSAFE_VIOLATION":
             exposure_score = 0
         elif any(w in lower for w in ["two worker", "crew", "multiple workers", "team", "contract workers"]):
@@ -791,6 +794,135 @@ def calculate_risk_score(report: Dict) -> Dict:
 
     risk_reason = generate_risk_reason(total, level, lsr, barrier_failures, neg_type, text)
 
+    # ─── Factor-Level Explainability Formulation (Phase 2) ─────────────────────
+    # Factor 1: Hazard Severity
+    if neg_type in ("SAFE_PREVENTIVE", "PREVENTIVE_BEFORE_EXPOSURE"):
+        hazard_reason = f"{lsr} hazard potential recognized and controlled prior to incident exposure." if is_standard_lsr else "Routine operational hazard baseline under general workplace safety."
+        hazard_evidence = exposure_evidence if exposure_evidence else ([lsr] if is_standard_lsr else [])
+    elif is_high_hazard_lsr or "critical" in severity:
+        hazard_reason = f"{lsr} is classified as a high-hazard Life-Saving Rule."
+        hazard_evidence = exposure_evidence if exposure_evidence else [lsr]
+    elif is_standard_lsr or "high" in severity:
+        hazard_reason = f"{lsr} is classified as a regulated Life-Saving Rule hazard."
+        hazard_evidence = exposure_evidence if exposure_evidence else [lsr]
+    elif "medium" in severity:
+        hazard_reason = "Moderate operational hazard level identified."
+        hazard_evidence = exposure_evidence if exposure_evidence else ([lsr] if is_standard_lsr else [])
+    else:
+        hazard_reason = "Minor or routine operational hazard with low inherent severity."
+        hazard_evidence = []
+
+    # Factor 2: Barrier Failure
+    barrier_evidence_list = report.get("barrier_evidence") or []
+    extracted_barrier_phrases = []
+    for be in barrier_evidence_list:
+        if isinstance(be, dict) and be.get("evidence"):
+            extracted_barrier_phrases.extend(be["evidence"])
+        elif isinstance(be, str):
+            extracted_barrier_phrases.append(be)
+    clean_ev_phrases = list(dict.fromkeys(extracted_barrier_phrases))
+
+    if neg_type in ("SAFE_PREVENTIVE", "PREVENTIVE_BEFORE_EXPOSURE"):
+        barrier_reason = f"Proactive stop-work or control verification successfully prevented barrier failure ({', '.join(barrier_failures)})." if barrier_failures else "No active barrier failure; safety controls verified."
+        barrier_evidence_phrases = clean_ev_phrases if clean_ev_phrases else ([f"Prevented: {b}" for b in barrier_failures] if barrier_failures else [])
+    elif n_barriers == 0:
+        barrier_reason = "Unsafe condition identified without explicit barrier breakdown." if neg_type == "UNSAFE_VIOLATION" else "All expected safety barriers intact or operational controls maintained."
+        barrier_evidence_phrases = []
+    elif n_barriers == 1:
+        barrier_reason = f"Required barrier was not implemented: {barrier_failures[0]}."
+        barrier_evidence_phrases = clean_ev_phrases if clean_ev_phrases else [barrier_failures[0]]
+    else:
+        barrier_reason = f"Multiple safety barrier breaches identified: {', '.join(barrier_failures[:2])}."
+        barrier_evidence_phrases = clean_ev_phrases if clean_ev_phrases else barrier_failures
+
+    # Factor 3: Exposure
+    if neg_type in ("SAFE_PREVENTIVE", "PREVENTIVE_BEFORE_EXPOSURE") or exposure_score == 0:
+        exposure_reason = "Hazard exposure prevented or absent before work commenced."
+        exposure_evidence_phrases = [no_exposure_match.group(0)] if no_exposure_match else (["exposure prevented"] if neg_type in ("SAFE_PREVENTIVE", "PREVENTIVE_BEFORE_EXPOSURE") else [])
+    elif exposure_score == 20:
+        exposure_reason = "Multiple personnel or crew actively exposed to hazard zone."
+        exposure_evidence_phrases = exposure_evidence if exposure_evidence else ["crew/multiple workers"]
+    elif exposure_score == 16:
+        exposure_reason = "Active operational exposure detected within hazard area."
+        exposure_evidence_phrases = exposure_evidence if exposure_evidence else ["active personnel exposure"]
+    elif exposure_score == 8:
+        exposure_reason = "Active personnel exposure occurred but was curtailed by subsequent intervention."
+        exposure_evidence_phrases = exposure_evidence if exposure_evidence else ["curtailed exposure"]
+    elif exposure_score == 4:
+        exposure_reason = "Personnel present in proximity to operational area."
+        exposure_evidence_phrases = exposure_evidence if exposure_evidence else ["personnel present"]
+    else:
+        exposure_reason = "Routine operational conditions with minimal direct exposure."
+        exposure_evidence_phrases = []
+
+    # Factor 4: Activity Criticality
+    if is_high_hazard_lsr:
+        activity_reason = f"High-risk critical activity governed by {lsr} mandatory procedures."
+        activity_evidence_phrases = [lsr]
+    elif is_standard_lsr:
+        activity_reason = f"Regulated operational activity subject to {lsr} safety requirements."
+        activity_evidence_phrases = [lsr]
+    else:
+        activity_reason = "General workplace operational activity."
+        activity_evidence_phrases = ["General Safety"]
+
+    # Factor 5: Recurrence Weight
+    if neg_type in ("SAFE_PREVENTIVE", "PREVENTIVE_BEFORE_EXPOSURE"):
+        recurrence_reason = "Proactive safety observation reduces organizational recurrence risk."
+        recurrence_evidence_phrases = [neg_type]
+    elif "incident" in report_type:
+        recurrence_reason = "Actual incident occurrence carries maximum organizational risk priority."
+        recurrence_evidence_phrases = ["incident"]
+    elif "near miss" in report_type:
+        recurrence_reason = "Near-miss event indicates elevated risk of future high-consequence recurrence."
+        recurrence_evidence_phrases = ["near miss"]
+    elif "unsafe act" in report_type or neg_type == "UNSAFE_VIOLATION":
+        recurrence_reason = "Unsafe act or direct violation increases probability of severe event."
+        recurrence_evidence_phrases = ["unsafe act" if "unsafe act" in report_type else "direct violation"]
+    else:
+        recurrence_reason = "Standard recurrence weight based on operational classification."
+        recurrence_evidence_phrases = []
+
+    factors_list = [
+        {
+            "name": "Hazard Severity",
+            "score": hazard_severity,
+            "max_score": 30,
+            "reason": hazard_reason,
+            "evidence": hazard_evidence,
+        },
+        {
+            "name": "Barrier Failure",
+            "score": barrier_score,
+            "max_score": 35 if n_barriers > 1 else 25,
+            "reason": barrier_reason,
+            "evidence": barrier_evidence_phrases,
+        },
+        {
+            "name": "Exposure",
+            "score": exposure_score,
+            "max_score": 20,
+            "reason": exposure_reason,
+            "evidence": exposure_evidence_phrases,
+        },
+        {
+            "name": "Activity Criticality",
+            "score": activity_score,
+            "max_score": 10,
+            "reason": activity_reason,
+            "evidence": activity_evidence_phrases,
+        },
+        {
+            "name": "Recurrence Weight",
+            "score": recurrence_score,
+            "max_score": 15,
+            "reason": recurrence_reason,
+            "evidence": recurrence_evidence_phrases,
+        },
+    ]
+
+    factor_breakdown_dict = {f["name"]: f for f in factors_list}
+
     return {
         "risk_score": total,
         "raw_score": total,
@@ -800,13 +932,8 @@ def calculate_risk_score(report: Dict) -> Dict:
         "primary_barrier": primary_barrier,
         "negation_type": neg_type,
         "negation_details": neg_details,
-        "factors": [
-            {"name": "Hazard Severity", "score": hazard_severity, "max_score": 30},
-            {"name": "Barrier Failure", "score": barrier_score, "max_score": 35 if n_barriers > 1 else 25},
-            {"name": "Exposure", "score": exposure_score, "max_score": 20},
-            {"name": "Activity Criticality", "score": activity_score, "max_score": 10},
-            {"name": "Recurrence Weight", "score": recurrence_score, "max_score": 15},
-        ],
+        "factors": factors_list,
+        "factor_breakdown": factor_breakdown_dict,
     }
 
 
@@ -889,6 +1016,7 @@ def analyze_report(report: Dict) -> Dict:
             "report_text": text,
             "life_saving_rule": lsr,
             "barrier_failures": barrier_failures,
+            "barrier_evidence": barrier_evidence,
             "negation_type": neg_type,
             "negation_details": neg_details,
         })
@@ -939,12 +1067,23 @@ def analyze_report(report: Dict) -> Dict:
         if neg_type in ("SAFE_PREVENTIVE", "PREVENTIVE_BEFORE_EXPOSURE") or temporal_sequence in ("PURE_SAFE", "PREVENTIVE_BEFORE_EXPOSURE", "UNSAFE_TO_SAFE"):
             sif_potential = "NO"
             prevented_barriers = [f"Prevented: {b}" for b in barrier_failures] if barrier_failures else ["Safely Controlled"]
-            explanation = (
-                f"SAFE PREVENTIVE DECISION: Proactive intervention stopped/avoided hazard exposure before breach. "
-                f"Risk score reduced to {score}/100 ({level}) and SIF potential is NO. "
-                f"Timeline: {' -> '.join(temporal_timeline)}. Quality: {analysis_quality}. "
-                f"Confidence: {system_confidence} ({system_confidence_score})."
-            )
+            if barrier_failures:
+                prevented_str = ", ".join(f"Prevented: {b}" for b in barrier_failures)
+                explanation = (
+                    f"SAFE PREVENTIVE DECISION: Proactive intervention prevented barrier omission before exposure ({prevented_str}). "
+                    f"No active worker exposure occurred under {lsr}. "
+                    f"Risk score reduced to {score}/100 ({level}) and SIF potential is NO. "
+                    f"Timeline: {' -> '.join(temporal_timeline)}. Quality: {analysis_quality}. "
+                    f"Confidence: {system_confidence} ({system_confidence_score})."
+                )
+            else:
+                explanation = (
+                    f"SAFE PREVENTIVE DECISION: Proactive intervention stopped/avoided hazard exposure before breach. "
+                    f"Required safety controls were maintained under {lsr}. "
+                    f"Risk score reduced to {score}/100 ({level}) and SIF potential is NO. "
+                    f"Timeline: {' -> '.join(temporal_timeline)}. Quality: {analysis_quality}. "
+                    f"Confidence: {system_confidence} ({system_confidence_score})."
+                )
             display_barriers = prevented_barriers
             recommended_actions = [
                 "Log positive safety intervention / proactive stop report.",
@@ -956,10 +1095,9 @@ def analyze_report(report: Dict) -> Dict:
             sif_potential = "YES" if (has_sif_precursor or score >= 70) else ("NO" if score <= 30 else "UNKNOWN")
             barrier_list_str = ", ".join(barrier_failures) if barrier_failures else "Critical barrier failure"
             explanation = (
-                f"INHERENT RISK DETECTED WITH SUBSEQUENT INTERVENTION: {lsr} violation occurred with active exposure. "
-                f"{barrier_list_str} remains a barrier failure. "
-                f"Supervisor/management intervention stopped ongoing work and reduced residual exposure, "
-                f"but the original unsafe event remains a significant safety finding (SIF Potential: {sif_potential}). "
+                f"INHERENT RISK DETECTED WITH SUBSEQUENT INTERVENTION: Unsafe {lsr} exposure occurred with active barrier breach ({barrier_list_str}). "
+                f"Subsequent supervisor/management intervention curtailed ongoing exposure, "
+                f"but the initial unsafe event remains a significant safety finding (SIF Potential: {sif_potential}). "
                 f"Timeline: {' -> '.join(temporal_timeline)}. Inherent Risk: {level} ({score}/100)."
             )
             display_barriers = barrier_failures if barrier_failures else ["Unknown Barrier Failure"]
@@ -1007,7 +1145,8 @@ def analyze_report(report: Dict) -> Dict:
 
             barrier_summary = f"{len(barrier_failures)} barrier failure(s) detected: {', '.join(barrier_failures)}" if barrier_failures else "Unknown Barrier Failure"
             explanation = (
-                f"UNSAFE CONDITION / VIOLATION: Flagged under {lsr} Life-Saving Rule ({temporal_sequence}). {barrier_summary}. "
+                f"UNSAFE CONDITION / VIOLATION: Active {lsr} violation ({temporal_sequence}) with direct hazard exposure. "
+                f"{barrier_summary}. "
                 f"Timeline: {' -> '.join(temporal_timeline)}. "
                 f"Risk score {score}/100 ({level}) increased due to missing safety controls during active work. SIF Potential: {sif_potential}. "
                 f"System Confidence: {system_confidence} ({system_confidence_score}). Quality: {analysis_quality}."
@@ -1027,11 +1166,24 @@ def analyze_report(report: Dict) -> Dict:
         except Exception:
             safety_concepts = []
 
+        # Structured Evidence Model (Phase 2)
+        try:
+            from services.concept_extractor import build_structured_evidence
+            structured_evidence = build_structured_evidence(
+                text=text,
+                negation_type=neg_type,
+                detected_barriers=display_barriers,
+                lsr=lsr
+            )
+        except Exception:
+            structured_evidence = []
+
         raw_output = {
             "source": "engine",
             "fallback_indicator": None,
             "input_feedback": generate_input_feedback(analysis_quality),
             "safety_concepts": safety_concepts,
+            "structured_evidence": structured_evidence,
             "risk_score": score,
             "raw_score": raw_score,
             "normalized_score": normalized_score,
@@ -1064,6 +1216,7 @@ def analyze_report(report: Dict) -> Dict:
             "evidence_phrases": evidence,
             "explanation": explanation,
             "risk_factors": risk_data["factors"],
+            "factor_breakdown": risk_data.get("factor_breakdown") or {f["name"]: f for f in risk_data["factors"]},
             "recommended_actions": recommended_actions,
             "mode": "rule-based",
         }

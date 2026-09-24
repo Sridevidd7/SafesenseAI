@@ -23,10 +23,11 @@ import models
 from schemas import CopilotHistoryMessage
 from services.copilot_service import (
     get_baseline_summary,
-    retrieve_relevant_reports,
     format_context,
     chat_with_copilot,
 )
+from services import copilot_retrieval
+from services.copilot_retrieval import retrieve_relevant_reports
 from main import app
 
 
@@ -51,10 +52,12 @@ class TestSafetyCopilot(unittest.TestCase):
         """Verify baseline summary accurately reflects SQLite database rows."""
         summary = get_baseline_summary(self.db)
         self.assertIsInstance(summary, str)
-        self.assertIn("Database Overview:", summary)
-        self.assertIn("SIF Potential:", summary)
-        self.assertIn("Risk Level Breakdown:", summary)
-        self.assertIn("Top Operating Sites:", summary)
+        # Phase 3 grounded format: deterministic aggregates with explicit scope lines
+        self.assertIn("Reports examined", summary)
+        self.assertIn("SIF-potential reports in scope:", summary)
+        self.assertIn("Risk level distribution in scope:", summary)
+        self.assertIn("Reports by site", summary)
+        self.assertIn("Barrier failure frequency:", summary)
 
     def test_dynamic_retrieval_relevance(self):
         """Verify token matching retrieves relevant reports for specific queries."""
@@ -145,7 +148,9 @@ class TestSafetyCopilot(unittest.TestCase):
             )
 
             self.assertEqual(resp.data_source, "SQLite")
-            self.assertEqual(resp.model, "openai/gpt-oss-120b")
+            # Model must match the service's env-based configuration, not a hardcoded name
+            from services.copilot_service import DEFAULT_GROQ_MODEL
+            self.assertEqual(resp.model, os.getenv("GROQ_MODEL", DEFAULT_GROQ_MODEL))
             self.assertIn("Site Alpha", resp.answer)
     def test_empty_database_handling(self):
         """Verify baseline summary and retrieval handle an empty DB gracefully."""

@@ -39,7 +39,8 @@ RULE_DEFINITIONS: Dict[str, Dict[str, List[str]]] = {
             "at height", "above ground", "elevated platform", "on scaffold",
             "on roof", "climbed ladder", "climbing ladder", "climbed tower",
             "manlift", "cherry picker", "edge protection", "fall arrest",
-            "climbed 10", "climbed", "falling from height", "working at height"
+            "climbed 10", "climbed", "falling from height", "working at height",
+            "climbed structure", "fall protection"
         ],
         "medium_signals": [
             "harness", "lanyard", "safety line", "lifeline", "guardrail",
@@ -55,7 +56,8 @@ RULE_DEFINITIONS: Dict[str, Dict[str, List[str]]] = {
             "lockout tagout", "lockout", "tagout", "loto", "energized system",
             "live circuit", "de energize", "de energization",
             "energy isolation", "electrical switchgear", "breaker panel",
-            "stored energy", "high voltage", "live wire", "live conductor"
+            "stored energy", "high voltage", "live wire", "live conductor",
+            "circuit remained live", "remained live", "energized equipment"
         ],
         "medium_signals": [
             "energized valve", "electrical panel", "breaker", "voltage", "switchgear",
@@ -83,7 +85,8 @@ RULE_DEFINITIONS: Dict[str, Dict[str, List[str]]] = {
         "strong_signals": [
             "line of fire", "suspended load", "under load", "crane lift",
             "rigging failure", "falling object", "struck by load", "drop zone",
-            "below load", "under suspended load"
+            "below load", "under suspended load", "beneath suspended load",
+            "beneath load", "entered the drop zone", "path of moving equipment"
         ],
         "medium_signals": [
             "crane", "hoist", "rigging", "exclusion zone", "sling",
@@ -187,13 +190,13 @@ def classify_life_saving_rule(text: str) -> Dict[str, Any]:
         matched_strong: List[str] = []
         # Match strong signals (multi-word phrase search)
         for sig in defs["strong_signals"]:
-            if sig in norm_text or re.search(r"\b" + re.escape(sig) + r"\b", norm_text):
+            if re.search(r"\b" + re.escape(sig) + r"\b", norm_text):
                 strong_hits += 1
                 matched_strong.append(sig)
 
         # Match medium signals (avoiding duplicate subset matching if already matched in strong)
         for sig in defs["medium_signals"]:
-            if (sig in norm_text or re.search(r"\b" + re.escape(sig) + r"\b", norm_text)):
+            if re.search(r"\b" + re.escape(sig) + r"\b", norm_text):
                 medium_hits += 1
 
         # Match weak signals

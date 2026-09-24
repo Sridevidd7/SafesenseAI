@@ -217,20 +217,31 @@ POSITIVE_COMPLETION_PATTERNS: Dict[str, List[re.Pattern]] = {
         re.compile(r"\b(?:gas\s+test(?:ing)?|atmospheric\s+test(?:ing)?|oxygen\s+test(?:ing)?|testing)\s+(?:was\s+|were\s+|is\s+)?(?:completed|conducted|performed|done|verified|confirmed|passed)\b"),
         re.compile(r"\b(?:completed|conducted|performed|done)\s+(?:the\s+)?(?:gas\s+test(?:ing)?|atmospheric\s+test(?:ing)?|testing)\b"),
         re.compile(r"\bgas\s+(?:was\s+)?tested\b"),
+        re.compile(r"\b(?:not\s+skipped|not\s+omitted|was\s+not\s+skipped|was\s+not\s+omitted|did\s+not\s+skip|did\s+not\s+omit|never\s+skipped)\b"),
+        re.compile(r"\batmosphere\s+(?:was\s+)?verified\s+safe\b"),
     ],
     "Permit Not Obtained": [
         re.compile(r"\b(?:permit|ptw|authorization|clearance)\s+(?:was\s+|were\s+)?(?:obtained|issued|signed|authorized|approved|in\s+place|completed)\b"),
         re.compile(r"\b(?:obtained|issued|approved)\s+(?:the\s+)?(?:permit|ptw|authorization|clearance)\b"),
     ],
     "Fall Protection Not Used": [
-        re.compile(r"\b(?:harness|fall\s+protection)\s+(?:was\s+|were\s+)?(?:worn|used|attached|tied\s+off|secured)\b"),
-        re.compile(r"\b(?:wearing|used|tied\s+off\s+with)\s+(?:safety\s+)?(?:harness|fall\s+protection)\b"),
+        re.compile(r"\b(?:harness|fall\s+protection|lanyard|lifeline)\s+(?:was\s+|were\s+|is\s+)?(?:worn|used|attached|tied\s+off|secured|connected|already\s+secured)\b"),
+        re.compile(r"\b(?:wearing|used|tied\s+off\s+with|connected|secured)\s+(?:safety\s+)?(?:harness|fall\s+protection|lanyard)\b"),
+        re.compile(r"\bconnected\s+(?:the\s+)?(?:fall\s+protection|harness|lanyard)\b"),
     ],
     "Lockout/Tagout Not Completed": [
-        re.compile(r"\b(?:lockout|tagout|loto)\s+(?:was\s+|were\s+)?(?:applied|completed|performed|done|installed)\b"),
+        re.compile(r"\b(?:lockout|tagout|loto)\s+(?:was\s+|were\s+)?(?:applied|completed|performed|done|installed|verified)\b"),
+        re.compile(r"\b(?:breaker|panel)\s+(?:was\s+)?(?:locked\s+out|isolated)\b"),
+        re.compile(r"\blocked\s+out\s+(?:and\s+verified)?\b"),
     ],
     "Isolation Not Applied": [
-        re.compile(r"\b(?:isolation|circuit|equipment|line)\s+(?:was\s+|were\s+)?(?:isolated|de\s*energized|switched\s+off)\b"),
+        re.compile(r"\b(?:isolation|circuit|equipment|line|breaker)\s+(?:was\s+|were\s+)?(?:isolated|de\s*energized|switched\s+off|verified\s+de\s*energized)\b"),
+        re.compile(r"\bverified\s+de\s*energized\b"),
+        re.compile(r"\bverified\s+(?:as\s+)?isolated\b"),
+    ],
+    "Exclusion Zone Not Established": [
+        re.compile(r"\b(?:area|perimeter|zone)\s+(?:was\s+)?(?:barricaded|cordoned|established|secured)\b"),
+        re.compile(r"\b(?:remained|stayed|stood)\s+outside\s+(?:the\s+)?(?:drop\s+zone|lift\s+radius|perimeter|exclusion\s+zone)\b"),
     ],
 }
 
@@ -271,6 +282,8 @@ BARRIER_REGEX_PATTERNS: Dict[str, List[re.Pattern]] = {
         re.compile(r"\b(?:energy|circuit|power|system|equipment|line)\s+(?:was|were)?\s*(?:not|never)\s*(?:isolated|de\s*energized|switched\s+off)\b"),
         re.compile(r"\b(?:live\s+circuit|energized\s+system)\s+(?:was\s+)?not\s+isolated\b"),
         re.compile(r"\bnot\s+de\s*energized\b"),
+        re.compile(r"\b(?:circuit|equipment|panel|system|line)\s+(?:remained|was\s+still|still)\s+(?:live|energized)\b"),
+        re.compile(r"\bwhile\s+(?:the\s+)?(?:circuit|equipment|panel|system)\s+remained\s+(?:live|energized)\b"),
     ],
     "Standby Person Not Assigned": [
         re.compile(r"\b(?:without|no|not|missing|forgot|omitted)\s+(?:any\s+)?(?:standby|standby\s+person|attendant|hole\s+watch|watcher|sentry)\b"),
@@ -279,7 +292,9 @@ BARRIER_REGEX_PATTERNS: Dict[str, List[re.Pattern]] = {
     "Exclusion Zone Not Established": [
         re.compile(r"\b(?:without|no|not|missing|forgot|omitted)\s+(?:any\s+)?(?:exclusion\s+zone|barricade|perimeter|drop\s+zone|warning\s+tape)\b"),
         re.compile(r"\b(?:exclusion\s+zone|barricade)\s+(?:was|were)?\s*(?:not|never)\s*(?:established|set\s+up|created|posted|demarcated)\b"),
-        re.compile(r"\bstanding\s+(?:under|below|beneath)\s+(?:a\s+)?(?:suspended\s+)?load\b"),
+        re.compile(r"\b(?:standing|stood|positioned|stationed|walked|walking|working)\s+(?:under|below|beneath)\s+(?:a\s+)?(?:suspended\s+)?(?:load|crane|lift|rigging)\b"),
+        re.compile(r"\b(?:entered|inside|crossed\s+into)\s+(?:the\s+)?(?:drop\s+zone|lift\s+radius|red\s+zone)\b"),
+        re.compile(r"\b(?:in\s+the\s+path\s+of|path\s+of)\s+(?:moving\s+)?(?:equipment|machinery|vehicle)\b"),
     ],
     "Fire Watch Not Posted": [
         re.compile(r"\b(?:without|no|not|missing|forgot|omitted)\s+(?:any\s+)?(?:fire\s+watch|fire\s+guard|spark\s+watch)\b"),
