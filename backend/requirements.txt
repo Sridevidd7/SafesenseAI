@@ -6,6 +6,8 @@ sqlalchemy==2.0.23
 pandas==2.1.3
 numpy==1.26.2
 scikit-learn==1.3.2
+# (scikit-learn also powers the Phase 5 ML-assisted semantic layer:
+#  services/semantic_service.py — TF-IDF concept bank, no new deps needed)
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 python-dotenv==1.0.0

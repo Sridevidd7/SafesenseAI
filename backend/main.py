@@ -36,6 +36,7 @@ from routes.actions   import router as actions_router
 from routes.reviews   import router as reviews_router
 from routes.admin     import router as admin_router
 from routes.copilot   import router as copilot_router
+from routes.semantic  import router as semantic_router
 
 # ─── App ──────────────────────────────────────────────────────────────────────
 app = FastAPI(
@@ -71,6 +72,7 @@ app.include_router(actions_router,   prefix="/api")
 app.include_router(reviews_router,   prefix="/api")
 app.include_router(admin_router,     prefix="/api")
 app.include_router(copilot_router,   prefix="/api")
+app.include_router(semantic_router,  prefix="/api")
 
 # Mount direct endpoints (without /api prefix) for direct client requests
 app.include_router(reports_router)
