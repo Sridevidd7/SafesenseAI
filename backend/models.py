@@ -50,7 +50,7 @@ class Report(Base):
     category      : life-saving rule category detected (e.g. "Confined Space")
     risk_level    : "LOW" | "MEDIUM" | "HIGH" | "CRITICAL"
     risk_score    : integer 0–100 computed by the rule engine
-    sif_potential : "YES" | "NO"
+    sif_potential : "YES" | "NO" | "UNKNOWN"
     date          : string date "YYYY-MM-DD"
     created_at    : UTC timestamp set automatically on insert
     """
@@ -62,7 +62,7 @@ class Report(Base):
     category      = Column(String(100),   nullable=False, default="General Safety")
     risk_level    = Column(String(10),    nullable=False, default="LOW")
     risk_score    = Column(Integer,       nullable=False, default=0)
-    sif_potential = Column(String(3),     nullable=False, default="NO")
+    sif_potential = Column(String(10),    nullable=False, default="NO")
     site          = Column(String(100),   nullable=False, default="Site Alpha")
     unit          = Column(String(100),   nullable=False, default="Not Specified")
     area          = Column(String(100),   nullable=False, default="Not Specified")

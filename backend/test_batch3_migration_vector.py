@@ -289,6 +289,80 @@ class MigrationScriptRealRunTests(unittest.TestCase):
                                 text=True, timeout=60, cwd=str(BACKEND))
         self.assertEqual(result.returncode, 2)  # refuses to run without PG URL
 
+    def test_legacy_sqlite_without_report_embeddings(self):
+        """A & C: Legacy SQLite with no report_embeddings table migrates cleanly."""
+        con = sqlite3.connect(self.src_path)
+        con.execute("DROP TABLE report_embeddings")
+        con.commit()
+        con.close()
+
+        # Dry run passes and plans 0 embeddings
+        code_dry = self._make_subprocess_code(
+            "import migrate_sqlite_to_postgres as M\n"
+            "rc = M.migrate(dry_run=True, source_path=_src_path)\n"
+            "print('RC:', rc)\n"
+        )
+        res_dry = self._run_code(code_dry)
+        self.assertIn("RC: 0", res_dry.stdout, res_dry.stderr)
+        self.assertIn("report_embeddings: would_migrate=0 already_present=0", res_dry.stdout)
+        self.assertIn("reports: would_migrate=1 already_present=0", res_dry.stdout)
+
+        # Real migration passes and reports table migrated
+        code_real = self._make_subprocess_code(
+            "import migrate_sqlite_to_postgres as M\n"
+            "rc = M.migrate(dry_run=False, source_path=_src_path)\n"
+            "print('RC:', rc)\n"
+        )
+        res_real = self._run_code(code_real)
+        self.assertIn("RC: 0", res_real.stdout, res_real.stderr)
+        self.assertIn("counts report_embeddings: source=0 (table not present)", res_real.stdout)
+        con_tgt = sqlite3.connect(self.tgt_path)
+        count_reports = con_tgt.execute("SELECT COUNT(*) FROM reports").fetchone()[0]
+        con_tgt.close()
+        self.assertEqual(count_reports, 1)
+
+    def test_sqlite_with_report_embeddings(self):
+        """B: SQLite with report_embeddings table migrates embeddings row."""
+        con = sqlite3.connect(self.src_path)
+        con.execute(
+            "INSERT INTO report_embeddings (report_id, model_id, dim, embedding, created_at) "
+            "VALUES ('MIG-1', 'test-model', 4, '[0.1, 0.2, 0.3, 0.4]', '2026-03-01T00:00:00Z')"
+        )
+        con.commit()
+        con.close()
+
+        code = self._make_subprocess_code(
+            "import migrate_sqlite_to_postgres as M\n"
+            "rc = M.migrate(dry_run=False, source_path=_src_path)\n"
+            "print('RC:', rc)\n"
+        )
+        res = self._run_code(code)
+        self.assertIn("RC: 0", res.stdout, res.stderr)
+        self.assertIn("report_embeddings: migrated=1 skipped(existing)=0", res.stdout)
+        con_tgt = sqlite3.connect(self.tgt_path)
+        count_emb = con_tgt.execute("SELECT COUNT(*) FROM report_embeddings").fetchone()[0]
+        con_tgt.close()
+        self.assertEqual(count_emb, 1)
+
+    def test_missing_report_embeddings_does_not_hide_unrelated_errors(self):
+        """D: Missing report_embeddings does not swallow unrelated database errors."""
+        con = sqlite3.connect(self.src_path)
+        con.execute("DROP TABLE report_embeddings")
+        con.execute("DROP TABLE reports")  # Required parent table missing
+        con.commit()
+        con.close()
+
+        code = self._make_subprocess_code(
+            "import migrate_sqlite_to_postgres as M\n"
+            "try:\n"
+            "    rc = M.migrate(dry_run=True, source_path=_src_path)\n"
+            "    print('RC:', rc)\n"
+            "except Exception as e:\n"
+            "    print('FAILED_AS_EXPECTED:', type(e).__name__)\n"
+        )
+        res = self._run_code(code)
+        self.assertIn("FAILED_AS_EXPECTED: OperationalError", res.stdout)
+
 
 class DockerComposeTests(unittest.TestCase):
 

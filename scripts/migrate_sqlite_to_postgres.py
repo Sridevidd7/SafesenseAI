@@ -98,7 +98,7 @@ def _row_dict(obj) -> dict:
 
 
 def migrate(dry_run: bool = False, source_path: str = None) -> int:
-    from sqlalchemy import func as sa_func
+    from sqlalchemy import func as sa_func, inspect
 
     import models
 
@@ -118,12 +118,19 @@ def migrate(dry_run: bool = False, source_path: str = None) -> int:
     try:
         _ensure_target_schema(tgt_engine)
 
+        has_report_embeddings = inspect(src_engine).has_table("report_embeddings")
+
         _log("=== SQLite -> PostgreSQL migration " + ("(DRY RUN) " if dry_run else "") + "===")
+        if not has_report_embeddings:
+            _log("Note: report_embeddings table not present in source SQLite database (legacy schema)")
 
         # Count source rows
         source_counts = {}
         for name, model, _pk in TABLE_ORDER:
-            source_counts[name] = src.query(sa_func.count(getattr(model, model.__table__.primary_key.columns.keys()[0]))).scalar() or 0
+            if name == "report_embeddings" and not has_report_embeddings:
+                source_counts[name] = 0
+            else:
+                source_counts[name] = src.query(sa_func.count(getattr(model, model.__table__.primary_key.columns.keys()[0]))).scalar() or 0
         _log("Source counts: " + ", ".join(f"{k}={v}" for k, v in source_counts.items()))
 
         migrated_counts = {name: 0 for name, _, _ in TABLE_ORDER}
@@ -183,45 +190,52 @@ def migrate(dry_run: bool = False, source_path: str = None) -> int:
             _log(f"reviews: migrated={migrated_counts['reviews']} skipped(existing)={skipped_counts['reviews']}")
 
             # ── Phase E: report_embeddings (optional table) ───────────────
-            try:
+            if has_report_embeddings:
                 src_rows = src.query(models.ReportEmbedding).all()
-            except Exception:
-                src_rows = []
-            for row in src_rows:
-                data = _row_dict(row)
-                exists = (
-                    tgt.query(models.ReportEmbedding)
-                    .filter_by(report_id=data["report_id"], model_id=data["model_id"])
-                    .first()
-                )
-                if exists:
-                    skipped_counts["report_embeddings"] += 1
-                    continue
-                tgt.add(models.ReportEmbedding(**data))
-                migrated_counts["report_embeddings"] += 1
-            tgt.commit()
-            _log(f"report_embeddings: migrated={migrated_counts['report_embeddings']} skipped(existing)={skipped_counts['report_embeddings']}")
+                for row in src_rows:
+                    data = _row_dict(row)
+                    exists = (
+                        tgt.query(models.ReportEmbedding)
+                        .filter_by(report_id=data["report_id"], model_id=data["model_id"])
+                        .first()
+                    )
+                    if exists:
+                        skipped_counts["report_embeddings"] += 1
+                        continue
+                    tgt.add(models.ReportEmbedding(**data))
+                    migrated_counts["report_embeddings"] += 1
+                tgt.commit()
+                _log(f"report_embeddings: migrated={migrated_counts['report_embeddings']} skipped(existing)={skipped_counts['report_embeddings']}")
+            else:
+                _log("report_embeddings: skipped (table not present in source)")
         else:
             # Dry run: compute what WOULD be skipped, based on existing target rows
             for name, model, pk in TABLE_ORDER:
                 if name == "report_embeddings":
-                    existing_keys = {
-                        (r[0], r[1]) for r in tgt.query(
-                            models.ReportEmbedding.report_id, models.ReportEmbedding.model_id
-                        ).all()
-                    }
-                    src_keys = {
-                        (r[0], r[1]) for r in src.query(
-                            models.ReportEmbedding.report_id, models.ReportEmbedding.model_id
-                        ).all()
-                    }
+                    if not has_report_embeddings:
+                        skipped_counts[name] = 0
+                        migrated_counts[name] = 0
+                    else:
+                        existing_keys = {
+                            (r[0], r[1]) for r in tgt.query(
+                                models.ReportEmbedding.report_id, models.ReportEmbedding.model_id
+                            ).all()
+                        }
+                        src_keys = {
+                            (r[0], r[1]) for r in src.query(
+                                models.ReportEmbedding.report_id, models.ReportEmbedding.model_id
+                            ).all()
+                        }
+                        already = len(src_keys & existing_keys)
+                        skipped_counts[name] = already
+                        migrated_counts[name] = max(0, len(src_keys) - already)
                 else:
                     pk_col = getattr(model, pk if isinstance(pk, str) else pk[0])
                     existing_keys = {r[0] for r in tgt.query(pk_col).all()}
                     src_keys = {r[0] for r in src.query(pk_col).all()}
-                already = len(src_keys & existing_keys)
-                skipped_counts[name] = already
-                migrated_counts[name] = max(0, len(src_keys) - already)
+                    already = len(src_keys & existing_keys)
+                    skipped_counts[name] = already
+                    migrated_counts[name] = max(0, len(src_keys) - already)
             _log("Dry-run plan: " + ", ".join(
                 f"{k}: would_migrate={migrated_counts[k]} already_present={skipped_counts[k]}"
                 for k in migrated_counts
@@ -234,12 +248,16 @@ def migrate(dry_run: bool = False, source_path: str = None) -> int:
         if not dry_run:
             # 1. Table counts
             for name, model, _pk in TABLE_ORDER:
-                src_count = src.query(sa_func.count()).select_from(model).scalar() or 0
-                tgt_count = tgt.query(sa_func.count()).select_from(model).scalar() or 0
-                status = "OK" if tgt_count >= src_count else "FAIL"
-                _log(f"  counts {name}: source={src_count} target={tgt_count} [{status}]")
-                if tgt_count < src_count:
-                    failures.append(f"{name}: target count {tgt_count} < source {src_count}")
+                if name == "report_embeddings" and not has_report_embeddings:
+                    tgt_count = tgt.query(sa_func.count()).select_from(model).scalar() or 0
+                    _log(f"  counts {name}: source=0 (table not present) target={tgt_count} [OK]")
+                else:
+                    src_count = src.query(sa_func.count()).select_from(model).scalar() or 0
+                    tgt_count = tgt.query(sa_func.count()).select_from(model).scalar() or 0
+                    status = "OK" if tgt_count >= src_count else "FAIL"
+                    _log(f"  counts {name}: source={src_count} target={tgt_count} [{status}]")
+                    if tgt_count < src_count:
+                        failures.append(f"{name}: target count {tgt_count} < source {src_count}")
 
             # 2. content_hash integrity: every source hash must exist in target
             src_hashes = {r[0] for r in src.query(models.Report.content_hash).all() if r[0]}
