@@ -297,6 +297,7 @@ def safe_fallback_analysis(report_text: str = "", reason: str = "Fallback trigge
         "barrier_failure": "Unknown Barrier Failure",
         "barrier_evidence": [],
         "safety_concepts": [],
+        "structured_evidence": [],
         "confidence": "LOW",
         "confidence_level": "LOW",
         "confidence_score": 0.30,
@@ -306,6 +307,16 @@ def safe_fallback_analysis(report_text: str = "", reason: str = "Fallback trigge
         "confidence_reason_user": "Low confidence due to speculative wording, fragmented phrasing, or missing operational details. Human verification is recommended.",
         "analysis_quality": "LOW",
         "adversarial_flags": [reason],
+        "temporal_sequence": "AMBIGUOUS",
+        "temporal_timeline": ["AMBIGUOUS"],
+        "negation_type": "AMBIGUOUS",
+        "negation_details": {
+            "negation_type": "AMBIGUOUS",
+            "preventive_phrase": None,
+            "barrier_phrase": None,
+            "interpretation": f"Safe fallback triggered: {reason}",
+            "score_impact": "Fallback baseline score."
+        },
         "sif_potential": "UNKNOWN",
         "life_saving_rule": "General Safety",
         "primary_rule": "General Safety",
@@ -315,6 +326,8 @@ def safe_fallback_analysis(report_text: str = "", reason: str = "Fallback trigge
         "hazard_detected": "Unspecified hazard",
         "evidence_phrases": [],
         "explanation": f"Safe deterministic fallback: {reason}. Supervisor review advised.",
+        "risk_factors": [],
+        "factor_breakdown": {},
         "recommended_actions": [
             "Review observation text manually with site supervisor.",
             "Verify operational controls and permits."

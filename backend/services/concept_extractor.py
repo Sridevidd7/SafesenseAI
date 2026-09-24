@@ -59,9 +59,9 @@ VEHICLE_ENTITIES: Set[str] = {
 
 # Exposure patterns
 ENTRY_EXPOSURE_PATTERNS = [
-    re.compile(r"\b(?:entered|was\s+entering|had\s+entered|proceeded\s+to\s+enter|stepping\s+into|stepped\s+into|went\s+into|gone\s+into|crawled\s+into|climbed\s+into)\b", re.IGNORECASE),
-    re.compile(r"\b(?:went\s+inside|stepped\s+inside|stepping\s+inside|gone\s+inside|accessed\s+the\s+inside|inside\s+the)\b", re.IGNORECASE),
-    re.compile(r"\b(?:accessing|accessed|penetrated|entered\s+the|entry\s+into)\b", re.IGNORECASE),
+    re.compile(r"\b(?:entered|was\s+entering|had\s+entered|proceeded\s+to\s+enter|stepping\s+into|stepped\s+into|went\s+into|gone\s+into|crawled\s+into|climbed\s+into)(?:\s+(?:the\s+)?(?:confined\s+space|vessel|tank|reactor|column|sump|pit|chamber|pipe|drum))?\b", re.IGNORECASE),
+    re.compile(r"\b(?:went\s+inside|stepped\s+inside|stepping\s+inside|gone\s+inside|accessed\s+the\s+inside|inside\s+the)(?:\s+(?:the\s+)?(?:confined\s+space|vessel|tank|reactor|column|sump|pit|chamber|pipe|drum))?\b", re.IGNORECASE),
+    re.compile(r"\b(?:accessing|accessed|penetrated|entered\s+the|entry\s+into)(?:\s+(?:the\s+)?(?:confined\s+space|vessel|tank|reactor|column|sump|pit|chamber|pipe|drum))?\b", re.IGNORECASE),
     re.compile(r"\b(?:opened|opening|accessing|accessed|working\s+on)\s+(?:the\s+)?(?:confined\s+space|vessel|tank|reactor|column|sump|pit|chamber|pipe|drum)\b", re.IGNORECASE),
     re.compile(r"\b(?:entry\s+occurred|entry\s+was\s+made|unauthorized\s+entry|confined[\s-]space\s+entry|vessel\s+entry|tank\s+entry|manhole\s+entry|chamber\s+entry)\b", re.IGNORECASE),
     re.compile(r"\b(?:worker|technician|operator|crew|personnel|contractor)\s+(?:inside|in\s+the)\b", re.IGNORECASE),
@@ -74,15 +74,17 @@ HEIGHT_EXPOSURE_PATTERNS = [
 ]
 
 ENERGY_EXPOSURE_PATTERNS = [
-    re.compile(r"\b(?:working\s+on|worked\s+on|servicing|serviced|repaired|repairing|troubleshooting|operating\s+on|operated\s+on|opened|opening)\s+(?:a\s+|the\s+)?(?:live|energized|circuit|panel|breaker|switchgear|motor|pump|board|transformer|switch)\b", re.IGNORECASE),
-    re.compile(r"\b(?:operated|working\s+with|worked\s+with)\s+(?:live\s+circuit|energized\s+system)\b", re.IGNORECASE),
+    re.compile(r"\b(?:working\s+on|worked\s+on|servicing|serviced|repaired|repairing|troubleshooting|operating\s+on|operated\s+on|opened|opening)\s+(?:a\s+|the\s+)?(?:live\s+|energized\s+|electrical\s+)?(?:circuit|panel|breaker|switchgear|motor|pump|board|transformer|switch|equipment)\b", re.IGNORECASE),
+    re.compile(r"\b(?:operated|working\s+with|worked\s+with)\s+(?:live\s+circuit|energized\s+system|energized\s+equipment)\b", re.IGNORECASE),
     re.compile(r"\b(?:touched|touching|handling)\s+(?:busbar|live\s+conductor|live\s+wire)\b", re.IGNORECASE),
+    re.compile(r"\b(?:maintenance|servicing|work|repair)\s+(?:began|started|conducted|performed)?\s*while\s+.*?\s+(?:live|energized)\b", re.IGNORECASE),
 ]
 
 LINE_OF_FIRE_EXPOSURE_PATTERNS = [
     re.compile(r"\b(?:walked|walking|standing|stood|positioned|stationed|moved)\s+(?:under|below|beneath)\s+(?:a\s+)?(?:suspended\s+load|load|crane|crane\s+load|lift|overhead\s+load|pipe)\b", re.IGNORECASE),
     re.compile(r"\b(?:under|below|beneath)\s+(?:a\s+)?(?:suspended\s+load|overhead\s+load)\b", re.IGNORECASE),
     re.compile(r"\b(?:entered|inside|crossed\s+into)\s+(?:the\s+)?(?:drop\s+zone|line\s+of\s+fire|lift\s+radius)\b", re.IGNORECASE),
+    re.compile(r"\b(?:in\s+the\s+path\s+of|path\s+of)\s+(?:moving\s+)?(?:equipment|machinery|vehicle)\b", re.IGNORECASE),
 ]
 
 # Modifiers
@@ -201,11 +203,13 @@ BARRIER_REQUIREMENTS: Dict[str, Dict[str, Any]] = {
         "targets": [
             "isolation", "energy isolation", "power", "electrical supply",
             "circuit", "power source", "electrical isolation", "line isolation",
-            "feed", "breaker", "switchgear", "motor", "pump", "system"
+            "feed", "breaker", "switchgear", "motor", "pump", "system",
+            "circuit remained live", "remained live", "energized equipment", "live circuit"
         ],
         "compounds": [
             "energy isolation", "de energization", "power cutoff", "electrical disconnection",
-            "system isolation", "circuit de energize", "breaker isolation", "electrical isolation"
+            "system isolation", "circuit de energize", "breaker isolation", "electrical isolation",
+            "circuit remained live", "remained live", "energized equipment", "live circuit"
         ],
         "default_lsr": "Energy Isolation",
         "detection_reason": "Matched safety concept signal '{phrase}' indicating electrical or energy source was not de-energized/isolated."
@@ -238,12 +242,16 @@ BARRIER_REQUIREMENTS: Dict[str, Dict[str, Any]] = {
         ],
         "targets": [
             "exclusion zone", "barricade", "perimeter", "drop zone",
-            "safety perimeter", "warning tape", "cordon", "red zone", "area"
+            "safety perimeter", "warning tape", "cordon", "red zone", "area",
+            "beneath suspended load", "under suspended load", "positioned beneath suspended load",
+            "entered the drop zone", "path of moving equipment"
         ],
         "compounds": [
             "exclusion zone", "perimeter barricade", "drop zone clearance",
             "red zone demarcation", "lift exclusion", "safety perimeter",
-            "area was barricaded", "barricaded", "barricade"
+            "area was barricaded", "barricaded", "barricade",
+            "beneath suspended load", "under suspended load", "positioned beneath suspended load",
+            "entered the drop zone", "path of moving equipment"
         ],
         "default_lsr": "Line of Fire",
         "detection_reason": "Matched safety concept signal '{phrase}' indicating missing barricade/perimeter or personnel below suspended load."
@@ -298,6 +306,49 @@ BARRIER_REQUIREMENTS: Dict[str, Dict[str, Any]] = {
         ],
         "default_lsr": "Energy Isolation",
         "detection_reason": "Matched safety concept signal '{phrase}' indicating line/vessel was not depressurized or bled before opening."
+    }
+}
+
+POSITIVE_CONTROL_PATTERNS: Dict[str, Dict[str, Any]] = {
+    "gas_testing_verified": {
+        "concept": "gas_testing_verified",
+        "rule": "Confined Space",
+        "patterns": [
+            re.compile(r"\b(?:gas\s+testing|gas\s+test|atmospheric\s+testing|atmospheric\s+monitoring|atmosphere)\s+(?:was|were|is)?\s*(?:completed|verified|performed|done|confirmed|tested|verified\s+safe)\b", re.I),
+            re.compile(r"\b(?:completed|verified)\s+(?:gas\s+testing|atmospheric\s+monitoring|air\s+testing)\s+before\s+entry\b", re.I),
+            re.compile(r"\batmosphere\s+(?:was\s+)?verified\s+safe\b", re.I),
+            re.compile(r"\bgas\s+testing\s+was\s+not\s+skipped\b", re.I),
+            re.compile(r"\bnot\s+skipped\s+(?:any\s+)?(?:gas\s+testing|atmospheric\s+testing)\b", re.I),
+        ]
+    },
+    "fall_protection_verified": {
+        "concept": "fall_protection_verified",
+        "rule": "Working at Height",
+        "patterns": [
+            re.compile(r"\b(?:connected|secured|tied\s+off|attached)\s+(?:safety\s+)?(?:fall\s+protection|harness|lanyard)\b", re.I),
+            re.compile(r"\b(?:fall\s+protection|harness|lanyard)\s+(?:was\s+|were\s+)?(?:already\s+secured|secured|connected|tied\s+off|inspected)\b", re.I),
+            re.compile(r"\bworker\s+connected\s+fall\s+protection\s+before\s+climbing\b", re.I),
+            re.compile(r"\bconnected\s+(?:the\s+)?(?:fall\s+protection|harness)\s+before\s+(?:climbing|work)\b", re.I),
+        ]
+    },
+    "energy_isolation_verified": {
+        "concept": "energy_isolation_verified",
+        "rule": "Energy Isolation",
+        "patterns": [
+            re.compile(r"\b(?:breaker|panel|circuit|equipment)\s+(?:was\s+)?(?:locked\s+out|isolated|de-energized)\b", re.I),
+            re.compile(r"\b(?:locked\s+out\s+and\s+verified\s+de-energized|verified\s+de-energized)\b", re.I),
+            re.compile(r"\blockout\s+was\s+completed\s+before\s+work\b", re.I),
+            re.compile(r"\blockout\s+tagout\s+(?:was\s+)?(?:verified|completed)\b", re.I),
+        ]
+    },
+    "exclusion_zone_verified": {
+        "concept": "exclusion_zone_verified",
+        "rule": "Line of Fire",
+        "patterns": [
+            re.compile(r"\barea\s+was\s+barricaded\b", re.I),
+            re.compile(r"\b(?:remained|stayed)\s+outside\s+(?:the\s+)?(?:drop\s+zone|lift\s+radius|perimeter|exclusion\s+zone)\b", re.I),
+            re.compile(r"\bexclusion\s+zone\s+(?:was\s+)?(?:established|barricaded)\b", re.I),
+        ]
     }
 }
 
@@ -549,6 +600,26 @@ def extract_safety_concepts(text: str) -> Dict[str, Any]:
                 "detection_reason": req["detection_reason"].format(phrase=clean_ev[0])
             })
 
+    # 4. POSITIVE CONTROL DETECTION
+    positive_controls = []
+    for ctrl_key, ctrl_info in POSITIVE_CONTROL_PATTERNS.items():
+        for pat in ctrl_info["patterns"]:
+            m = pat.search(norm_text)
+            if m:
+                matched_phrase = m.group(0)
+                concepts.add(ctrl_info["concept"])
+                hazard_domains.add(ctrl_info["rule"])
+                evidence_phrases.append(matched_phrase)
+                positive_controls.append({
+                    "concept": ctrl_info["concept"],
+                    "source_phrase": matched_phrase,
+                    "evidence_type": "POSITIVE_CONTROL",
+                    "state": "POSITIVE_CONTROL",
+                    "related_barrier": None,
+                    "related_rule": ctrl_info["rule"]
+                })
+                break
+
     evidence_phrases = list(dict.fromkeys(evidence_phrases + exposure_evidence))
 
     primary_domain = "General Safety"
@@ -577,6 +648,7 @@ def extract_safety_concepts(text: str) -> Dict[str, Any]:
         "exposure_type": exposure_type,
         "exposure_evidence": exposure_evidence,
         "barrier_omissions": barrier_omissions,
+        "positive_controls": positive_controls,
         "evidence_phrases": evidence_phrases,
     }
 
@@ -588,3 +660,142 @@ def get_compositional_barrier_evidence(text: str) -> List[Dict[str, Any]]:
     """
     concepts_data = extract_safety_concepts(text)
     return concepts_data["barrier_omissions"]
+
+
+def build_structured_evidence(
+    text: str,
+    negation_type: str = "NONE",
+    detected_barriers: Optional[List[str]] = None,
+    lsr: str = "General Safety"
+) -> List[Dict[str, Any]]:
+    """
+    Constructs an explicit, deterministic evidence model:
+    Each item tracks:
+      - concept (canonical concept string)
+      - source_phrase (exact phrase from report)
+      - evidence_type (ENTRY_EXPOSURE, HEIGHT_EXPOSURE, ENERGY_EXPOSURE,
+                      LINE_OF_FIRE_EXPOSURE, BARRIER_OMISSION, POSITIVE_CONTROL, SPATIAL_ENTITY)
+      - state (ACTIVE_VIOLATION, PREVENTED, POSITIVE_CONTROL, CONTEXT_ONLY)
+      - related_barrier (e.g. 'Gas Testing Not Completed' or None)
+      - related_rule (canonical Life-Saving Rule)
+    """
+    if not text or not text.strip():
+        return []
+
+    concepts_data = extract_safety_concepts(text)
+    items: List[Dict[str, Any]] = []
+    seen: Set[Tuple[str, str, str]] = set()
+
+    is_preventive = negation_type in ("SAFE_PREVENTIVE", "PREVENTIVE_BEFORE_EXPOSURE") or (
+        detected_barriers and any(b.startswith("Prevented:") for b in detected_barriers)
+    )
+
+    rule_context = lsr if lsr != "General Safety" else concepts_data.get("primary_domain", "General Safety")
+
+    # 1. Exposure Evidence
+    if concepts_data["exposure_detected"] and concepts_data["exposure_evidence"]:
+        exp_phrase = concepts_data["exposure_evidence"][0]
+        exp_type = concepts_data.get("exposure_type") or "ENTRY_EXPOSURE"
+        state = "PREVENTED" if is_preventive else "ACTIVE_VIOLATION"
+
+        c_name = "entry_exposure"
+        if exp_type == "HEIGHT_EXPOSURE":
+            c_name = "height_exposure"
+        elif exp_type == "ENERGY_EXPOSURE":
+            c_name = "energy_exposure"
+        elif exp_type == "LINE_OF_FIRE_EXPOSURE":
+            c_name = "line_of_fire_exposure"
+
+        key = (c_name, exp_phrase, state)
+        if key not in seen:
+            seen.add(key)
+            items.append({
+                "concept": c_name,
+                "source_phrase": exp_phrase,
+                "evidence_type": exp_type,
+                "state": state,
+                "related_barrier": None,
+                "related_rule": rule_context
+            })
+
+    # 2. Barrier Omission Evidence
+    for b_item in concepts_data["barrier_omissions"]:
+        b_name = b_item["barrier"]
+        b_concept = b_item["concept"]
+        b_phrase = b_item["evidence"][0] if b_item.get("evidence") else b_name
+        b_rule = b_item.get("default_lsr") or rule_context
+        state = "PREVENTED" if is_preventive else "ACTIVE_VIOLATION"
+
+        key = (b_concept, b_phrase, state)
+        if key not in seen:
+            seen.add(key)
+            items.append({
+                "concept": b_concept,
+                "source_phrase": b_phrase,
+                "evidence_type": "BARRIER_OMISSION",
+                "state": state,
+                "related_barrier": b_name,
+                "related_rule": b_rule
+            })
+
+    # 3. Positive Control Evidence
+    for pos_item in concepts_data.get("positive_controls", []):
+        key = (pos_item["concept"], pos_item["source_phrase"], "POSITIVE_CONTROL")
+        if key not in seen:
+            seen.add(key)
+            items.append({
+                "concept": pos_item["concept"],
+                "source_phrase": pos_item["source_phrase"],
+                "evidence_type": "POSITIVE_CONTROL",
+                "state": "POSITIVE_CONTROL",
+                "related_barrier": None,
+                "related_rule": pos_item["related_rule"]
+            })
+
+    # 4. Context / Spatial Entities (if no active exposure and no barrier omission)
+    if not concepts_data["exposure_detected"] and not concepts_data["barrier_omissions"] and not concepts_data.get("positive_controls"):
+        norm = normalize_safety_text(text)
+        for ent in sorted(CONFINED_SPACE_ENTITIES, key=len, reverse=True):
+            if re.search(r"\b" + re.escape(ent) + r"\b", norm):
+                key = ("confined_space", ent, "CONTEXT_ONLY")
+                if key not in seen:
+                    seen.add(key)
+                    items.append({
+                        "concept": "confined_space",
+                        "source_phrase": ent,
+                        "evidence_type": "SPATIAL_ENTITY",
+                        "state": "CONTEXT_ONLY",
+                        "related_barrier": None,
+                        "related_rule": "Confined Space"
+                    })
+                break
+        for ent in sorted(HEIGHT_ENTITIES, key=len, reverse=True):
+            if re.search(r"\b" + re.escape(ent) + r"\b", norm):
+                key = ("working_at_height", ent, "CONTEXT_ONLY")
+                if key not in seen:
+                    seen.add(key)
+                    items.append({
+                        "concept": "working_at_height",
+                        "source_phrase": ent,
+                        "evidence_type": "SPATIAL_ENTITY",
+                        "state": "CONTEXT_ONLY",
+                        "related_barrier": None,
+                        "related_rule": "Working at Height"
+                    })
+                break
+        for ent in sorted(ENERGY_ENTITIES, key=len, reverse=True):
+            if re.search(r"\b" + re.escape(ent) + r"\b", norm):
+                key = ("energy_isolation", ent, "CONTEXT_ONLY")
+                if key not in seen:
+                    seen.add(key)
+                    items.append({
+                        "concept": "energy_isolation",
+                        "source_phrase": ent,
+                        "evidence_type": "SPATIAL_ENTITY",
+                        "state": "CONTEXT_ONLY",
+                        "related_barrier": None,
+                        "related_rule": "Energy Isolation"
+                    })
+                break
+
+    return items
