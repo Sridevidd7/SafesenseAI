@@ -207,6 +207,17 @@ def upsert_embeddings(
                 from database import SessionLocal
                 session = SessionLocal()
             try:
+                is_pg = session.bind is not None and session.bind.dialect.name == "postgresql"
+                # Native pgvector write format for PostgreSQL ('[v1,v2,...]'::vector);
+                # portable JSON text for SQLite (searchable only on PostgreSQL).
+                def _write_value(vector: Sequence[float]) -> Any:
+                    if is_pg:
+                        # Cast to the real vector type server-side; the ORM
+                        # column is declared as Vector(768) on PostgreSQL so
+                        # a plain string is coerced by pgvector's type engine.
+                        return "[" + ",".join(str(float(v)) for v in vector) + "]"
+                    return vector_to_text(vector)
+
                 for item in valid:
                     dim = item.dim or len(item.vector)
                     row = (
@@ -219,10 +230,7 @@ def upsert_embeddings(
                             report_id=item.report_id, model_id=item.model_id
                         )
                         session.add(row)
-                    # Portable TEXT storage on both dialects. On PostgreSQL a
-                    # future batch may switch to native vector writes; the
-                    # schema already carries the real type there.
-                    row.embedding = vector_to_text(item.vector)
+                    row.embedding = _write_value(item.vector)
                     row.dim = dim
                     inserted += 1
                 session.commit()
@@ -363,29 +371,44 @@ def search_similar(
 
 def queue_embedding_on_ingest(report_id: str, description: str) -> Optional[Dict[str, Any]]:
     """
-    Minimal architecture hook for future embedding persistence, called after a
-    report row is created.
+    Optional embedding persistence hook, called after a report row is created.
 
-    Behavior (by design, per Phase 6 Batch 2):
-    - Disabled unless SAFESENSE_EMBEDDINGS=on (default off) -> returns None.
-    - No embedding model exists yet in this batch: with the flag on, the hook
-      reports "no_provider" without altering anything. It exists so Batch 3
-      can supply a real vector provider without touching ingestion code again.
-    - Never raises; never alters report analysis, risk, or SIF outputs.
+    Behavior:
+    - SAFESENSE_EMBEDDINGS=off (default): returns None immediately. No
+      embedding generation, no DB writes; ingestion behavior is unchanged.
+    - Flag on, no provider configured: fails gracefully with status
+      "no_provider" — ingestion continues normally, nothing is written.
+    - Flag on, provider available: embeds the (already PII-redacted)
+      description and upserts the vector. Any failure degrades to a reported
+      status without raising — ingestion must never break over embeddings.
+
+    Never alters report analysis, risk, SIF, or any deterministic output.
     """
     if not embeddings_enabled():
         return None
     try:
-        info = get_backend_info()
-        return {
-            "status": "no_provider",
-            "report_id": report_id,
-            "backend": info["backend"],
-            "reason": (
-                "embedding generation is not implemented in this batch; "
-                "vector persistence infrastructure is ready"
-            ),
-        }
+        from services.embedding_provider import get_provider
+        provider = get_provider()
+        vector = provider.embed(description or "")
+        if vector is None:
+            info = get_backend_info()
+            return {
+                "status": "no_provider",
+                "report_id": report_id,
+                "backend": info["backend"],
+                "model_id": provider.model_id,
+                "reason": "embedding provider is unavailable; no vector written",
+            }
+
+        result = upsert_embeddings([
+            EmbeddingInput(
+                report_id=report_id,
+                model_id=provider.model_id,
+                vector=vector,
+                dim=provider.dim or len(vector),
+            )
+        ])
+        return {"status": result.get("status"), "report_id": report_id, "detail": result}
     except Exception as exc:  # absolute last resort — ingestion must never break
         logger.debug("Embedding hook degraded: %s", exc)
-        return None
+        return {"status": "error", "report_id": report_id, "reason": str(exc)}
