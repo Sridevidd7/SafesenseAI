@@ -74,6 +74,9 @@ class GroundedPattern:
     evidence_report_ids: List[str] = field(default_factory=list)
     confidence: Optional[float] = None
     raw: Dict[str, Any] = field(default_factory=dict)
+    # Phase 5: optional ML-assisted semantic signal attached to the cluster's
+    # sample descriptions (advisory; see services/semantic_service.py).
+    semantic_signal: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -87,6 +90,7 @@ class GroundedPattern:
             "barriers": self.barriers,
             "evidence_report_ids": self.evidence_report_ids,
             "confidence": self.confidence,
+            "semantic_signal": self.semantic_signal,
         }
 
 
@@ -167,6 +171,7 @@ def normalize_pattern(raw_pattern: Dict[str, Any]) -> Optional[GroundedPattern]:
         confidence=_coerce_confidence(
             raw_pattern.get("confidence", raw_pattern.get("confidence_level"))
         ),
+        semantic_signal=raw_pattern.get("semantic_signal"),
         raw=dict(raw_pattern),
     )
 
@@ -211,11 +216,28 @@ def get_pattern_context(db: Session, question: str, max_patterns: int = 5) -> Di
     for rp in raw_patterns:
         normalized = normalize_pattern(rp)
         if normalized is not None and normalized.frequency >= 2:
+            _attach_semantic_signal(normalized)
             patterns.append(normalized)
         if len(patterns) >= max_patterns:
             break
 
     return {"patterns": patterns, "provider": name}
+
+
+def _attach_semantic_signal(pattern: GroundedPattern) -> None:
+    """
+    Phase 5: attach an ML-assisted semantic signal to a pattern using its sample
+    descriptions (advisory only — never modifies safety fields).
+    Failures degrade silently to semantic_signal=None; pattern intelligence
+    must keep working without the ML layer.
+    """
+    try:
+        from services.semantic_service import summarize_semantic_signal
+        samples = pattern.raw.get("sample_descriptions") or []
+        if samples:
+            pattern.semantic_signal = summarize_semantic_signal(samples)
+    except Exception as exc:  # noqa: BLE001 — ML must never break pattern intelligence
+        logger.debug("Semantic signal unavailable for %s: %s", pattern.pattern_id, exc)
 
 
 def format_pattern_context(patterns: List[GroundedPattern], provider: str) -> str:
