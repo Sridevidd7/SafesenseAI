@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import text, func
 from sqlalchemy.orm import Session
 
-from database import get_db
+from database import get_db, IS_SQLITE
 from models import Report, Action, Review, UploadedFile
 from services.llm_service import CACHE
 
@@ -81,18 +81,24 @@ def reset_database(
         db.execute(text("DELETE FROM reports;"))
         db.execute(text("DELETE FROM uploaded_files;"))
 
-        # 2. Reset SQLite auto-increment sequence counters
-        try:
-            db.execute(text("DELETE FROM sqlite_sequence WHERE name IN ('reports', 'uploaded_files', 'actions', 'reviews');"))
-        except Exception:
-            pass
+        # 2. Reset auto-increment sequence counters (dialect-portable, Phase 6).
+        #    SQLite: clear sqlite_sequence. PostgreSQL: identity/sequence columns
+        #    are reset via RESTART IDENTITY, so no action is needed after a full
+        #    table DELETE here; sequences remain consistent either way.
+        if IS_SQLITE:
+            try:
+                db.execute(text("DELETE FROM sqlite_sequence WHERE name IN ('reports', 'uploaded_files', 'actions', 'reviews');"))
+            except Exception:
+                pass
 
         db.commit()
 
-        # 3. VACUUM database outside of active transaction
+        # 3. VACUUM database outside of active transaction (SQLite-only pragma;
+        #    PostgreSQL reclaims space via autovacuum)
         try:
-            with engine.raw_connection() as raw_conn:
-                raw_conn.cursor().execute("VACUUM;")
+            if IS_SQLITE:
+                with engine.raw_connection() as raw_conn:
+                    raw_conn.cursor().execute("VACUUM;")
         except Exception as vac_err:
             logger.warning(f"VACUUM note: {vac_err}")
 

@@ -2,16 +2,52 @@ import os
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
-# SQLite database file — use absolute path to guarantee same DB regardless of cwd
+# ─── Database configuration (Phase 6 Batch 1) ────────────────────────────────
+# DATABASE_URL selects the database backend:
+#   - unset / empty          → SQLite demo/local mode (default, zero setup)
+#   - postgresql+psycopg://… → PostgreSQL (schema owned by Alembic)
+# SQLite remains the default local/demo database; PostgreSQL is used only when
+# DATABASE_URL is explicitly configured.
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATABASE_PATH = os.path.join(BASE_DIR, "safety.db")
-DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
+DEFAULT_SQLITE_URL = f"sqlite:///{DATABASE_PATH}"
 
-engine = create_engine(
-    DATABASE_URL,
-    # Required for SQLite: allows multiple threads to share one connection
-    connect_args={"check_same_thread": False},
-)
+
+def _resolve_database_url() -> str:
+    """Resolve the effective database URL from the environment."""
+    url = (os.getenv("DATABASE_URL") or "").strip()
+    return url if url else DEFAULT_SQLITE_URL
+
+
+def _is_sqlite(url: str) -> bool:
+    return url.startswith("sqlite")
+
+
+DATABASE_URL = _resolve_database_url()
+IS_SQLITE = _is_sqlite(DATABASE_URL)
+
+
+def create_database_engine(url: str = None):
+    """
+    Create the SQLAlchemy engine with dialect-appropriate options.
+
+    SQLite keeps check_same_thread=False (FastAPI threadpool shares the file
+    connection). PostgreSQL uses pool_pre_ping for dropped-connection
+    resilience. No SQLite-specific connect_args leak into other dialects.
+    """
+    url = url or DATABASE_URL
+    if _is_sqlite(url):
+        return create_engine(
+            url,
+            connect_args={"check_same_thread": False},
+        )
+    return create_engine(
+        url,
+        pool_pre_ping=True,
+    )
+
+
+engine = create_database_engine(DATABASE_URL)
 
 # Session factory — used as a dependency in route handlers
 SessionLocal = sessionmaker(
@@ -30,7 +66,14 @@ def ensure_schema_migrations():
     """
     Ensure newly added columns and constraints exist in existing SQLite tables.
     Non-destructive, idempotent, safe to execute repeatedly without dropping or altering existing data.
+
+    SQLite-only by design (Phase 6): uses PRAGMA/ALTER TABLE bootstrap and the
+    demo-dataset seed, which apply to the local/demo SQLite database. When
+    running on PostgreSQL, schema is owned by Alembic and this function is a
+    no-op.
     """
+    if not IS_SQLITE:
+        return
     with engine.connect() as conn:
         try:
             # Check existing columns in reports table
