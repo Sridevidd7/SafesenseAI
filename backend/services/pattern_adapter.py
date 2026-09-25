@@ -22,6 +22,8 @@ Copilot is grounded today and Phase 2 can later replace/extend the provider.
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
@@ -35,6 +37,21 @@ PatternProvider = Callable[[Session, str], List[Dict[str, Any]]]
 
 _PROVIDER: Optional[PatternProvider] = None
 _PROVIDER_NAME: str = "builtin_pattern_engine"
+
+_PATTERN_ADAPTER_LOCK = threading.Lock()
+_PATTERN_ADAPTER_CACHE: Optional[Dict[str, Any]] = None
+_PATTERN_ADAPTER_CACHE_KEY: Optional[str] = None
+_PATTERN_ADAPTER_CACHE_TIME: float = 0.0
+_PATTERN_ADAPTER_TTL: float = 60.0
+
+
+def clear_pattern_adapter_cache() -> None:
+    """Invalidate in-process GroundedPattern cache for Copilot."""
+    global _PATTERN_ADAPTER_CACHE, _PATTERN_ADAPTER_CACHE_KEY, _PATTERN_ADAPTER_CACHE_TIME
+    with _PATTERN_ADAPTER_LOCK:
+        _PATTERN_ADAPTER_CACHE = None
+        _PATTERN_ADAPTER_CACHE_KEY = None
+        _PATTERN_ADAPTER_CACHE_TIME = 0.0
 
 
 def register_pattern_provider(provider: PatternProvider, name: str) -> None:
@@ -50,6 +67,7 @@ def register_pattern_provider(provider: PatternProvider, name: str) -> None:
     global _PROVIDER, _PROVIDER_NAME
     _PROVIDER = provider
     _PROVIDER_NAME = name
+    clear_pattern_adapter_cache()
     logger.info("Pattern provider registered: %s", name)
 
 
@@ -58,6 +76,7 @@ def reset_pattern_provider() -> None:
     global _PROVIDER, _PROVIDER_NAME
     _PROVIDER = None
     _PROVIDER_NAME = "builtin_pattern_engine"
+    clear_pattern_adapter_cache()
 
 
 @dataclass
@@ -196,6 +215,7 @@ def _builtin_provider(db: Session, question: str) -> List[Dict[str, Any]]:
 def get_pattern_context(db: Session, question: str, max_patterns: int = 5) -> Dict[str, Any]:
     """
     Retrieve normalized patterns for the Copilot question.
+    Caches normalized patterns for the default built-in provider to avoid reclustering on every message.
 
     Returns:
         {
@@ -203,25 +223,73 @@ def get_pattern_context(db: Session, question: str, max_patterns: int = 5) -> Di
             "provider": provider name (provenance),
         }
     """
+    global _PATTERN_ADAPTER_CACHE, _PATTERN_ADAPTER_CACHE_KEY, _PATTERN_ADAPTER_CACHE_TIME
     provider = _PROVIDER or _builtin_provider
     name = _PROVIDER_NAME if _PROVIDER else "builtin_pattern_engine"
 
+    # Custom providers may depend on the specific question text; bypass cache
+    if _PROVIDER is not None:
+        try:
+            raw_patterns = provider(db, question) or []
+        except Exception as exc:
+            logger.warning("Pattern provider '%s' failed: %s", name, exc)
+            raw_patterns = []
+
+        patterns: List[GroundedPattern] = []
+        for rp in raw_patterns:
+            normalized = normalize_pattern(rp)
+            if normalized is not None and normalized.frequency >= 2:
+                _attach_semantic_signal(normalized)
+                patterns.append(normalized)
+            if len(patterns) >= max_patterns:
+                break
+        return {"patterns": patterns, "provider": name}
+
+    # Built-in provider: cache normalized patterns keyed by dataset version
     try:
-        raw_patterns = provider(db, question) or []
-    except Exception as exc:
-        logger.warning("Pattern provider '%s' failed: %s", name, exc)
-        raw_patterns = []
+        from services.analytics_service import get_dataset_version
+        dataset_version = get_dataset_version(db)
+    except Exception:
+        dataset_version = "unknown"
 
-    patterns: List[GroundedPattern] = []
-    for rp in raw_patterns:
-        normalized = normalize_pattern(rp)
-        if normalized is not None and normalized.frequency >= 2:
-            _attach_semantic_signal(normalized)
-            patterns.append(normalized)
-        if len(patterns) >= max_patterns:
-            break
+    cache_key = f"{dataset_version}_{max_patterns}"
+    now = time.time()
 
-    return {"patterns": patterns, "provider": name}
+    if (
+        _PATTERN_ADAPTER_CACHE is not None
+        and _PATTERN_ADAPTER_CACHE_KEY == cache_key
+        and (now - _PATTERN_ADAPTER_CACHE_TIME) < _PATTERN_ADAPTER_TTL
+    ):
+        return {"patterns": list(_PATTERN_ADAPTER_CACHE["patterns"]), "provider": name}
+
+    with _PATTERN_ADAPTER_LOCK:
+        now = time.time()
+        if (
+            _PATTERN_ADAPTER_CACHE is not None
+            and _PATTERN_ADAPTER_CACHE_KEY == cache_key
+            and (now - _PATTERN_ADAPTER_CACHE_TIME) < _PATTERN_ADAPTER_TTL
+        ):
+            return {"patterns": list(_PATTERN_ADAPTER_CACHE["patterns"]), "provider": name}
+
+        try:
+            raw_patterns = provider(db, question) or []
+        except Exception as exc:
+            logger.warning("Pattern provider '%s' failed: %s", name, exc)
+            raw_patterns = []
+
+        computed_patterns: List[GroundedPattern] = []
+        for rp in raw_patterns:
+            normalized = normalize_pattern(rp)
+            if normalized is not None and normalized.frequency >= 2:
+                _attach_semantic_signal(normalized)
+                computed_patterns.append(normalized)
+            if len(computed_patterns) >= max_patterns:
+                break
+
+        _PATTERN_ADAPTER_CACHE = {"patterns": computed_patterns}
+        _PATTERN_ADAPTER_CACHE_KEY = cache_key
+        _PATTERN_ADAPTER_CACHE_TIME = time.time()
+        return {"patterns": list(computed_patterns), "provider": name}
 
 
 def _attach_semantic_signal(pattern: GroundedPattern) -> None:

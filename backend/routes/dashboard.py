@@ -91,9 +91,9 @@ def get_dashboard_stats(
 def get_risk_trends(
     db: Session = Depends(get_db),
 ):
-    total = analytics_svc.get_total_reports(db)
     intel = analytics_svc.get_pattern_intelligence(db)
-    trends = analytics_svc.get_monthly_trends(db)
+    total = intel.get("total_reports") if "total_reports" in intel else analytics_svc.get_total_reports(db)
+    trends = intel.get("monthly") if "monthly" in intel else analytics_svc.get_monthly_trends(db, total=total)
     meta = _build_meta(total)
     return {
         "data":          trends,
@@ -116,8 +116,8 @@ def get_risk_trends(
 def get_patterns(
     db: Session = Depends(get_db),
 ):
-    total = analytics_svc.get_total_reports(db)
     intel = analytics_svc.get_pattern_intelligence(db)
+    total = intel.get("total_reports") if "total_reports" in intel else analytics_svc.get_total_reports(db)
     return {
         "data":              intel["clusters"],
         "repeated_failures": intel["repeated_failures"],
@@ -137,10 +137,10 @@ def get_patterns(
 def get_insights(
     db: Session = Depends(get_db),
 ):
-    total = analytics_svc.get_total_reports(db)
-    insights = analytics_svc.get_all_insights(db)
+    intel = analytics_svc.get_pattern_intelligence(db)
+    total = intel.get("total_reports") if "total_reports" in intel else analytics_svc.get_total_reports(db)
     return {
-        "data": insights,
+        "data": intel.get("insights", []),
         "meta": _build_meta(total),
     }
 

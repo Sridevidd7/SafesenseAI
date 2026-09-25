@@ -192,16 +192,28 @@ def tokenize_report(text: str) -> Set[str]:
     return expanded_tokens
 
 
-def compute_similarity(rep1: Dict[str, Any], rep2: Dict[str, Any]) -> float:
+def get_report_tokens(rep: Dict[str, Any]) -> Set[str]:
+    """Extract and tokenize report description or text."""
+    text = rep.get("description") or rep.get("report_text") or ""
+    return tokenize_report(text)
+
+
+def compute_similarity(
+    rep1: Dict[str, Any],
+    rep2: Dict[str, Any],
+    tokens1: Optional[Set[str]] = None,
+    tokens2: Optional[Set[str]] = None,
+) -> float:
     """
     Computes hybrid similarity between two safety reports:
       similarity_score = 0.5 * token_similarity + 0.3 * barrier_overlap + 0.2 * rule_match
-    """
-    text1 = rep1.get("description") or rep1.get("report_text") or ""
-    text2 = rep2.get("description") or rep2.get("report_text") or ""
 
-    tokens1 = tokenize_report(text1)
-    tokens2 = tokenize_report(text2)
+    Accepts pre-computed tokens1 / tokens2 to avoid repeated tokenization of identical reports.
+    """
+    if tokens1 is None:
+        tokens1 = get_report_tokens(rep1)
+    if tokens2 is None:
+        tokens2 = get_report_tokens(rep2)
 
     if not tokens1 or not tokens2:
         token_similarity = 0.0
@@ -237,7 +249,10 @@ def compute_similarity(rep1: Dict[str, Any], rep2: Dict[str, Any]) -> float:
     return round(similarity_score, 4)
 
 
-def compute_adaptive_threshold(reports: List[Dict[str, Any]]) -> float:
+def compute_adaptive_threshold(
+    reports: List[Dict[str, Any]],
+    precomputed_tokens: Optional[List[Set[str]]] = None,
+) -> float:
     """
     Computes dataset-adaptive clustering threshold:
       threshold = mean_pairwise_similarity + 0.1
@@ -245,6 +260,9 @@ def compute_adaptive_threshold(reports: List[Dict[str, Any]]) -> float:
     """
     if len(reports) < 2:
         return 0.65
+
+    if precomputed_tokens is None:
+        precomputed_tokens = [get_report_tokens(r) for r in reports]
 
     pair_scores: List[float] = []
     n = len(reports)
@@ -255,7 +273,12 @@ def compute_adaptive_threshold(reports: List[Dict[str, Any]]) -> float:
         for j in range(i + 1, n):
             counter += 1
             if counter % step == 0:
-                sim = compute_similarity(reports[i], reports[j])
+                sim = compute_similarity(
+                    reports[i],
+                    reports[j],
+                    tokens1=precomputed_tokens[i],
+                    tokens2=precomputed_tokens[j],
+                )
                 pair_scores.append(sim)
 
     if not pair_scores:
@@ -269,33 +292,48 @@ def compute_adaptive_threshold(reports: List[Dict[str, Any]]) -> float:
     return adaptive_thresh
 
 
-def cluster_reports(reports: List[Dict[str, Any]], similarity_threshold: Optional[float] = None) -> List[Dict[str, Any]]:
+def cluster_reports(
+    reports: List[Dict[str, Any]],
+    similarity_threshold: Optional[float] = None,
+) -> List[Dict[str, Any]]:
     """
     Similarity-based single-pass clustering of safety reports.
     Uses adaptive dataset threshold if similarity_threshold is not explicitly provided.
+    Pre-tokenizes each report exactly once to avoid redundant O(N^2) tokenization.
     """
     if not reports:
         return []
 
+    # Pre-tokenize all reports exactly once
+    precomputed_tokens = [get_report_tokens(r) for r in reports]
+
     if similarity_threshold is None:
-        effective_threshold = compute_adaptive_threshold(reports)
+        effective_threshold = compute_adaptive_threshold(reports, precomputed_tokens=precomputed_tokens)
     else:
         effective_threshold = similarity_threshold
         logger.info(f"[SIMILARITY_THRESHOLD] explicit_threshold={effective_threshold}")
 
     raw_clusters: List[List[Dict[str, Any]]] = []
+    cluster_centroid_tokens: List[Set[str]] = []
 
-    for report in reports:
+    for idx, report in enumerate(reports):
+        rep_tokens = precomputed_tokens[idx]
         matched = False
-        for cluster in raw_clusters:
+        for c_idx, cluster in enumerate(raw_clusters):
             # Compare with representative centroid (first report in cluster)
-            sim = compute_similarity(report, cluster[0])
+            sim = compute_similarity(
+                report,
+                cluster[0],
+                tokens1=rep_tokens,
+                tokens2=cluster_centroid_tokens[c_idx],
+            )
             if sim >= effective_threshold:
                 cluster.append(report)
                 matched = True
                 break
         if not matched:
             raw_clusters.append([report])
+            cluster_centroid_tokens.append(rep_tokens)
 
 
     formatted_clusters: List[Dict[str, Any]] = []

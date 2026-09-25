@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
+import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta, date
@@ -57,9 +59,10 @@ def get_total_reports(db: Session) -> int:
     return total
 
 
-def get_risk_distribution(db: Session) -> dict[str, int]:
+def get_risk_distribution(db: Session, total: Optional[int] = None) -> dict[str, int]:
     """Return report counts grouped by risk level (CRITICAL, HIGH, MEDIUM, LOW)."""
-    total = get_total_reports(db)
+    if total is None:
+        total = get_total_reports(db)
     if total == 0:
         distribution = {level: 0 for level in RISK_LEVEL_ORDER}
         logger.info(f"[{datetime.now(timezone.utc).isoformat()}] EVENT=query_risk_distribution TOTAL_REPORTS=0 RESULT={distribution}")
@@ -78,9 +81,10 @@ def get_risk_distribution(db: Session) -> dict[str, int]:
     return distribution
 
 
-def get_sif_count(db: Session) -> dict[str, Any]:
+def get_sif_count(db: Session, total: Optional[int] = None) -> dict[str, Any]:
     """Return SIF potential statistics (sif_count, non_sif_count, sif_percentage)."""
-    total = get_total_reports(db)
+    if total is None:
+        total = get_total_reports(db)
     if total == 0:
         res = {
             "sif_count": 0,
@@ -124,9 +128,9 @@ def _month_key(date_str: str) -> str | None:
     return m if re.match(r"^\d{4}-\d{2}$", m) else None
 
 
-def get_monthly_trends(db: Session) -> list[dict[str, Any]]:
+def get_monthly_trends(db: Session, total: Optional[int] = None) -> list[dict[str, Any]]:
     """Compute monthly risk and precursor trends from reports."""
-    total_count = get_total_reports(db)
+    total_count = total if total is not None else get_total_reports(db)
     if total_count == 0:
         logger.info(f"[{datetime.now(timezone.utc).isoformat()}] EVENT=query_monthly_trends TOTAL_REPORTS=0 ROWS_RETURNED=0")
         print("Trend rows: []")
@@ -162,8 +166,8 @@ def get_monthly_trends(db: Session) -> list[dict[str, Any]]:
     # If date strings could not be grouped by strftime (e.g. non-standard date format),
     # aggregate them into an overall monthly window rather than returning empty
     if not results and total_count > 0:
-        sif_stats = get_sif_count(db)
-        risk_dist = get_risk_distribution(db)
+        sif_stats = get_sif_count(db, total=total_count)
+        risk_dist = get_risk_distribution(db, total=total_count)
         current_month = datetime.now(timezone.utc).strftime("%Y-%m")
         results.append({
             "month":    current_month,
@@ -239,59 +243,117 @@ def get_category_patterns(db: Session) -> list[dict[str, Any]]:
     Similarity-based clustering of safety reports.
     Replaces raw SQL GROUP BY with Jaccard similarity clustering and pattern analysis.
     """
-    total_count = get_total_reports(db)
-    if total_count == 0:
-        logger.info(f"[{datetime.now(timezone.utc).isoformat()}] EVENT=query_category_patterns TOTAL_REPORTS=0 ROWS_RETURNED=0")
-        return []
+    intel = get_pattern_intelligence(db)
+    return intel.get("clusters", [])
 
-    reports_data = get_all_reports_dicts(db)
-    clusters = cluster_reports(reports_data)
 
-    logger.info(f"[{datetime.now(timezone.utc).isoformat()}] EVENT=query_category_patterns TOTAL_REPORTS={total_count} CLUSTERS_FOUND={len(clusters)}")
-    return clusters
+# ─── Pattern Intelligence In-Process TTL Cache ──────────────────────────────
+_PATTERN_INTEL_LOCK = threading.Lock()
+_PATTERN_INTEL_CACHE: Optional[Dict[str, Any]] = None
+_PATTERN_INTEL_CACHE_KEY: Optional[str] = None
+_PATTERN_INTEL_CACHE_TIME: float = 0.0
+_PATTERN_INTEL_TTL: float = 60.0
+
+
+def get_dataset_version(db: Session) -> str:
+    """Returns a lightweight signature representing the current report dataset version."""
+    row = db.query(func.count(Report.report_id), func.max(Report.created_at)).first()
+    count = int(row[0]) if row and row[0] is not None else 0
+    max_created = str(row[1]) if row and row[1] is not None else "none"
+    return f"{count}_{max_created}"
+
+
+def clear_pattern_intelligence_cache() -> None:
+    """Invalidate in-process pattern intelligence cache."""
+    global _PATTERN_INTEL_CACHE, _PATTERN_INTEL_CACHE_KEY, _PATTERN_INTEL_CACHE_TIME
+    with _PATTERN_INTEL_LOCK:
+        _PATTERN_INTEL_CACHE = None
+        _PATTERN_INTEL_CACHE_KEY = None
+        _PATTERN_INTEL_CACHE_TIME = 0.0
+    logger.info("Pattern intelligence cache invalidated.")
+    try:
+        from services.pattern_adapter import clear_pattern_adapter_cache
+        clear_pattern_adapter_cache()
+    except Exception:
+        pass
 
 
 def get_pattern_intelligence(db: Session) -> dict[str, Any]:
     """
     Comprehensive Insight & Pattern Engine:
     Returns similarity clusters, recurring failure detections, trend classifications, anomalies, and AI insights.
+    Caches results in memory with a 60s TTL and dataset-version validation.
     """
-    total_count = get_total_reports(db)
-    if total_count == 0:
-        return {
-            "clusters":          [],
-            "repeated_failures": [],
-            "anomalies":         [],
-            "insights":          [],
-            "trend_summary":     {
-                "trend": "STABLE",
-                "reason": "Insufficient data for reliable trend analysis",
-                "trend_note": "Insufficient data for reliable trend analysis"
+    global _PATTERN_INTEL_CACHE, _PATTERN_INTEL_CACHE_KEY, _PATTERN_INTEL_CACHE_TIME
+
+    dataset_version = get_dataset_version(db)
+    now = time.time()
+
+    # Fast-path read without lock
+    if (
+        _PATTERN_INTEL_CACHE is not None
+        and _PATTERN_INTEL_CACHE_KEY == dataset_version
+        and (now - _PATTERN_INTEL_CACHE_TIME) < _PATTERN_INTEL_TTL
+    ):
+        return _PATTERN_INTEL_CACHE
+
+    with _PATTERN_INTEL_LOCK:
+        now = time.time()
+        if (
+            _PATTERN_INTEL_CACHE is not None
+            and _PATTERN_INTEL_CACHE_KEY == dataset_version
+            and (now - _PATTERN_INTEL_CACHE_TIME) < _PATTERN_INTEL_TTL
+        ):
+            return _PATTERN_INTEL_CACHE
+
+        total_count = int(dataset_version.split("_")[0])
+        if total_count == 0:
+            empty_res = {
+                "clusters":          [],
+                "repeated_failures": [],
+                "anomalies":         [],
+                "insights":          [],
+                "trend_summary":     {
+                    "trend": "STABLE",
+                    "reason": "Insufficient data for reliable trend analysis",
+                    "trend_note": "Insufficient data for reliable trend analysis"
+                },
+                "monthly":           [],
+                "total_reports":     0,
             }
+            _PATTERN_INTEL_CACHE = empty_res
+            _PATTERN_INTEL_CACHE_KEY = dataset_version
+            _PATTERN_INTEL_CACHE_TIME = now
+            return empty_res
+
+        reports_data = get_all_reports_dicts(db)
+        if len(reports_data) != total_count:
+            logger.warning(f"[DATA_MISMATCH] total_reports_query={total_count} reports_fetched={len(reports_data)}")
+
+        clusters = cluster_reports(reports_data)
+        repeated = detect_repeated_failures(clusters)
+        monthly = get_monthly_trends(db, total=total_count)
+        sites = get_site_stats(db, total=total_count)
+
+        counts = [int(m.get("total", 0)) for m in monthly]
+        labels = [m.get("month", "") for m in monthly]
+        trend_info = classify_trend(counts, labels, total_reports=total_count)
+        anomalies = detect_anomalies(monthly, sites)
+        insights = generate_insights(reports_data, clusters, monthly, sites)
+
+        res = {
+            "clusters":          clusters,
+            "repeated_failures": repeated,
+            "anomalies":         anomalies,
+            "insights":          insights,
+            "trend_summary":     trend_info,
+            "monthly":           monthly,
+            "total_reports":     total_count,
         }
-
-    reports_data = get_all_reports_dicts(db)
-    if len(reports_data) != total_count:
-        logger.warning(f"[DATA_MISMATCH] total_reports_query={total_count} reports_fetched={len(reports_data)}")
-
-    clusters = cluster_reports(reports_data)
-    repeated = detect_repeated_failures(clusters)
-    monthly = get_monthly_trends(db)
-    sites = get_site_stats(db)
-
-    counts = [int(m.get("total", 0)) for m in monthly]
-    labels = [m.get("month", "") for m in monthly]
-    trend_info = classify_trend(counts, labels, total_reports=total_count)
-    anomalies = detect_anomalies(monthly, sites)
-    insights = generate_insights(reports_data, clusters, monthly, sites)
-
-    return {
-        "clusters":          clusters,
-        "repeated_failures": repeated,
-        "anomalies":         anomalies,
-        "insights":          insights,
-        "trend_summary":     trend_info
-    }
+        _PATTERN_INTEL_CACHE = res
+        _PATTERN_INTEL_CACHE_KEY = dataset_version
+        _PATTERN_INTEL_CACHE_TIME = time.time()
+        return res
 
 
 def get_all_insights(db: Session) -> list[dict[str, Any]]:
@@ -300,9 +362,9 @@ def get_all_insights(db: Session) -> list[dict[str, Any]]:
     return intel.get("insights", [])
 
 
-def get_site_stats(db: Session) -> list[dict[str, Any]]:
+def get_site_stats(db: Session, total: Optional[int] = None) -> list[dict[str, Any]]:
     """Group reports by site facility and compute risk ranking metrics."""
-    total_count = get_total_reports(db)
+    total_count = total if total is not None else get_total_reports(db)
     if total_count == 0:
         logger.info(f"[{datetime.now(timezone.utc).isoformat()}] EVENT=query_site_stats TOTAL_REPORTS=0 ROWS_RETURNED=0")
         return []
@@ -346,9 +408,9 @@ def get_site_stats(db: Session) -> list[dict[str, Any]]:
     return results
 
 
-def get_activity_stats(db: Session) -> list[dict[str, Any]]:
+def get_activity_stats(db: Session, total: Optional[int] = None) -> list[dict[str, Any]]:
     """Group reports by operational activity and compute risk ranking metrics."""
-    total_count = get_total_reports(db)
+    total_count = total if total is not None else get_total_reports(db)
     if total_count == 0:
         logger.info(f"[{datetime.now(timezone.utc).isoformat()}] EVENT=query_activity_stats TOTAL_REPORTS=0 ROWS_RETURNED=0")
         print("Activity stats: []")
@@ -395,23 +457,26 @@ def get_activity_stats(db: Session) -> list[dict[str, Any]]:
 # ─── Composite Aggregation Functions ─────────────────────────────────────────
 
 def get_dashboard_data(db: Session) -> DashboardData:
-    """Assemble all dashboard figures using the shared query functions."""
-    total_reports = get_total_reports(db)
-    sif_stats = get_sif_count(db)
-    risk_distribution = get_risk_distribution(db)
-
-    # Category distribution
-    cat_rows = (
-        db.query(Report.category, func.count(Report.report_id))
-        .group_by(Report.category)
-        .order_by(func.count(Report.report_id).desc())
-        .all()
-    )
-    category_distribution = {str(row[0]): int(row[1]) for row in cat_rows if row[0]}
-
-    # Average risk score
-    raw_avg = db.query(func.avg(Report.risk_score)).scalar()
+    """Assemble all dashboard figures using consolidated queries."""
+    count_avg = db.query(func.count(Report.report_id), func.avg(Report.risk_score)).first()
+    total_reports = int(count_avg[0]) if count_avg and count_avg[0] is not None else 0
+    raw_avg = count_avg[1] if count_avg and count_avg[1] is not None else None
     avg_risk_score = round(float(raw_avg), 1) if raw_avg is not None else 0.0
+
+    sif_stats = get_sif_count(db, total=total_reports)
+    risk_distribution = get_risk_distribution(db, total=total_reports)
+
+    if total_reports > 0:
+        # Category distribution
+        cat_rows = (
+            db.query(Report.category, func.count(Report.report_id))
+            .group_by(Report.category)
+            .order_by(func.count(Report.report_id).desc())
+            .all()
+        )
+        category_distribution = {str(row[0]): int(row[1]) for row in cat_rows if row[0]}
+    else:
+        category_distribution = {}
 
     top_category = (
         max(category_distribution, key=category_distribution.__getitem__)
@@ -488,12 +553,13 @@ def get_debug_counts(db: Session) -> dict[str, int]:
 def refresh_analytics_cache(db: Session) -> dict[str, Any]:
     """Clear in-memory caches, recompute fresh aggregations, and return status."""
     CACHE.clear()
+    clear_pattern_intelligence_cache()
     total = get_total_reports(db)
-    sif = get_sif_count(db)
-    trends = get_monthly_trends(db)
+    sif = get_sif_count(db, total=total)
+    trends = get_monthly_trends(db, total=total)
     patterns = get_category_patterns(db)
-    sites = get_site_stats(db)
-    activities = get_activity_stats(db)
+    sites = get_site_stats(db, total=total)
+    activities = get_activity_stats(db, total=total)
 
     result = {
         "status": "refreshed",
