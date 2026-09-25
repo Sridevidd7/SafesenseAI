@@ -1,6 +1,9 @@
+import logging
 import os
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
+
+logger = logging.getLogger("safesense.database")
 
 # ─── Database configuration (Phase 6 Batch 1) ────────────────────────────────
 # DATABASE_URL selects the database backend:
@@ -65,7 +68,11 @@ def ping_database() -> bool:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1;"))
             return True
-    except Exception:
+    except Exception as exc:
+        from utils.logging_config import scrub_sensitive_data
+        cause = getattr(exc, "orig", exc)
+        safe_msg = scrub_sensitive_data(str(cause))
+        logger.error(f"[DATABASE_PING_FAILED] {type(cause).__name__}: {safe_msg}")
         return False
 
 
