@@ -10,6 +10,14 @@ import os
 from dataclasses import dataclass, field
 from typing import List
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(BASE_DIR, ".env"))
+    load_dotenv()
+except ImportError:
+    pass
+
 
 DEFAULT_INSECURE_SECRET = "safesense-ai-secret-key-change-in-production"
 LEGACY_INSECURE_SECRET = "safesense-ai-change-this-in-production"

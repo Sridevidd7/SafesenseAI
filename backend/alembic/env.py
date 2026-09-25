@@ -21,14 +21,24 @@ if config.config_file_name is not None:
 # Resolution order:  -x db_url=…  >  DATABASE_URL env  >  default SQLite file.
 # The URL is passed programmatically so alembic.ini stays free of secrets.
 import sys
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if backend_dir not in sys.path:
+    sys.path.insert(0, backend_dir)
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(backend_dir, ".env"))
+    load_dotenv()
+except ImportError:
+    pass
 
 from database import Base, DATABASE_URL as APP_DATABASE_URL  # noqa: E402
 import models  # noqa: E402,F401  — import registers all tables on Base.metadata
 
 x_args = context.get_x_argument(as_dictionary=True)
 ALEMBIC_URL = x_args.get("db_url") or os.getenv("ALEMBIC_DATABASE_URL") or APP_DATABASE_URL
-config.set_main_option("sqlalchemy.url", ALEMBIC_URL)
+# Escape '%' for configparser interpolation (e.g. URL-encoded passwords with %40)
+config.set_main_option("sqlalchemy.url", ALEMBIC_URL.replace("%", "%%"))
 
 # add your model's MetaData object here
 # for 'autogenerate' support

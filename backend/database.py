@@ -12,6 +12,13 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATABASE_PATH = os.path.join(BASE_DIR, "safety.db")
 DEFAULT_SQLITE_URL = f"sqlite:///{DATABASE_PATH}"
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(BASE_DIR, ".env"))
+    load_dotenv()
+except ImportError:
+    pass
+
 
 def _resolve_database_url() -> str:
     """Resolve the effective database URL from the environment."""
