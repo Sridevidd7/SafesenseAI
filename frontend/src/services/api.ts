@@ -1,5 +1,6 @@
+/// <reference types="vite/client" />
 /**
- * api.ts â€” Typed HTTP client for the SafeSense AI FastAPI backend.
+ * api.ts ─ Typed HTTP client for the SafeSense AI FastAPI backend.
  *
  * All calls go through the Vite dev-server proxy:
  *   /api/* â†’ http://localhost:8000/api/*
@@ -91,6 +92,17 @@ export interface UploadResult {
 
 // â”€â”€â”€ Base fetch wrapper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+const BASE_API_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+
+export function getApiUrl(path: string): string {
+  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+  const apiPath = cleanPath.startsWith('/api')
+    ? cleanPath
+    : `/api${cleanPath}`;
+
+  return `${BASE_API_URL}${apiPath}`;
+}
+
 function getAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   try {
@@ -106,7 +118,7 @@ function getAuthHeaders(): Record<string, string> {
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const authHeaders = getAuthHeaders();
-  const res = await fetch(`/api${path}`, {
+  const res = await fetch(getApiUrl(path), {
     ...init,
     headers: {
       ...authHeaders,
@@ -179,7 +191,7 @@ export async function fetchRiskIntelligenceTrends(): Promise<TrendPoint[]> {
  */
 export async function fetchTrendsIntelligence(): Promise<TrendsIntelligenceResponse> {
   const authHeaders = getAuthHeaders();
-  const res = await fetch('/api/risk-intelligence/trends', { headers: authHeaders });
+  const res = await fetch(getApiUrl('/risk-intelligence/trends'), { headers: authHeaders });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
@@ -229,7 +241,7 @@ export async function fetchReports(params?: FetchReportsParams): Promise<Reports
   const qs = query.toString() ? `?${query.toString()}` : '';
 
   const authHeaders = getAuthHeaders();
-  const res = await fetch(`/api/reports${qs}`, { headers: authHeaders });
+  const res = await fetch(getApiUrl(`/reports${qs}`), { headers: authHeaders });
   if (!res.ok) {
     let detail = `HTTP ${res.status}`;
     try {
@@ -308,7 +320,7 @@ export async function uploadReportsCSV(file: File): Promise<UploadResult> {
     // ignore
   }
 
-  const res = await fetch('/api/reports/upload', {
+  const res = await fetch(getApiUrl('/reports/upload'), {
     method: 'POST',
     body:   form,
     headers,
@@ -519,7 +531,7 @@ export async function fetchAnalyticsPatterns(): Promise<PatternItem[]> {
  */
 export async function fetchPatternIntelligence(): Promise<PatternIntelligenceEnvelope> {
   const authHeaders = getAuthHeaders();
-  const res = await fetch('/api/analytics/patterns', { headers: authHeaders });
+  const res = await fetch(getApiUrl('/analytics/patterns'), { headers: authHeaders });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
