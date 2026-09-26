@@ -5,8 +5,8 @@ import {
   LogOut, Bell, ChevronRight, Command, User
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { logoutOnServer, fetchPlatformInfo } from '../services/authClient';
-import { useState, useEffect } from 'react';
+import { logoutOnServer } from '../services/authClient';
+import { useState } from 'react';
 
 const NAV_ITEMS = [
   { to: '/app/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
@@ -26,13 +26,6 @@ export default function Layout() {
   const { user, dispatch, sidebarOpen, dataset, isDemo } = useApp();
   const navigate = useNavigate();
   const [notifOpen, setNotifOpen] = useState(false);
-  const [platformLabel, setPlatformLabel] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetchPlatformInfo().then(info => {
-      if (info) setPlatformLabel(`${info.database} · ${info.vector_store}`);
-    });
-  }, []);
 
   function handleLogout() {
     // Server-verified logout first (revocation contract), then local discard.
@@ -80,13 +73,6 @@ export default function Layout() {
           </div>
         )}
 
-        {/* Platform runtime label — dynamic from backend metadata */}
-        {sidebarOpen && platformLabel && (
-          <div className="mx-3 mt-2 px-3 py-2 rounded-lg text-[11px] font-medium text-slate-500 bg-slate-50 border border-slate-200" title="Runtime platform (from backend metadata)">
-            <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5" aria-hidden />
-            {platformLabel}
-          </div>
-        )}
 
         {/* Nav items */}
         <nav className="flex-1 overflow-y-auto py-3 space-y-1 px-2">

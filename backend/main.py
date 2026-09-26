@@ -47,7 +47,7 @@ if IS_SQLITE:
 
 # ─── Service imports ──────────────────────────────────────────────────────────
 from services.multilingual import LANG_DISPLAY, process_dataset, process_report
-from services.auth import require_authenticated, require_write
+from services.auth import require_authenticated, require_write, require_upload
 from services.report_generator import generate_summary_report
 from services.risk_engine import (
     analyze_report,
@@ -153,9 +153,9 @@ app.include_router(admin_router)
 app.include_router(copilot_router)
 
 # ─── Direct Upload Endpoint (with Size & Extension Hardening) ─────────────────
-# Same write authorization as the /api/reports/upload ingestion endpoint.
-@app.post("/api/upload", response_model=UploadResponse, tags=["Upload"], dependencies=[Depends(require_write)])
-@app.post("/upload", response_model=UploadResponse, tags=["Upload"], dependencies=[Depends(require_write)])
+# Same upload authorization as the /api/reports/upload ingestion endpoint (includes Viewer).
+@app.post("/api/upload", response_model=UploadResponse, tags=["Upload"], dependencies=[Depends(require_upload)])
+@app.post("/upload", response_model=UploadResponse, tags=["Upload"], dependencies=[Depends(require_upload)])
 def direct_upload_file(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),

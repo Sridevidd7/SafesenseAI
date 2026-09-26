@@ -70,6 +70,13 @@ WRITE_ROLES: Set[str] = {
     ROLE_SITE_MANAGER,
 }
 ADMIN_ROLES: Set[str] = {ROLE_ADMINISTRATOR}
+UPLOAD_ROLES: Set[str] = {
+    ROLE_ADMINISTRATOR,
+    ROLE_SAFETY_MANAGER,
+    ROLE_HSE_OFFICER,
+    ROLE_SITE_MANAGER,
+    ROLE_VIEWER,
+}
 
 
 # ─── Password hashing (bcrypt) ─────────────────────────────────────────────────
@@ -253,6 +260,16 @@ def require_write(user=Depends(get_current_user)):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Read-only accounts cannot modify safety data.",
+        )
+    return user
+
+
+def require_upload(user=Depends(get_current_user)):
+    """Roles allowed to upload safety reports (includes Administrator and Viewer)."""
+    if user.role not in UPLOAD_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your role is not authorized to upload reports.",
         )
     return user
 

@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from datetime import datetime, timezone
 from schemas import ReportCreate, ReportResponse, ReportListResponse, UploadResponse, MetaInfo
-from services.auth import require_authenticated, require_write
+from services.auth import require_authenticated, require_write, require_upload
 import services.report_service as svc
 import services.upload_service as upload_svc
 import services.analytics_service as analytics_svc
@@ -241,7 +241,7 @@ def upload_csv(
         description="CSV or Excel file with a 'description' column",
     ),
     db: Session = Depends(get_db),
-    user=Depends(require_write),
+    user=Depends(require_upload),
 ) -> UploadResponse:
     # ── Validate filename extension ───────────────────────────────────────────
     filename = file.filename or "upload"

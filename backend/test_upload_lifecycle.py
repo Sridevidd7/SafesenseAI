@@ -187,7 +187,7 @@ def test_upload_http_route_synchronous_session(test_session_factory):
     from fastapi.testclient import TestClient
     from main import app
     from database import get_db
-    from services.auth import require_write
+    from services.auth import require_write, require_upload
 
     def _override_get_db():
         db = test_session_factory()
@@ -198,6 +198,7 @@ def test_upload_http_route_synchronous_session(test_session_factory):
 
     app.dependency_overrides[get_db] = _override_get_db
     app.dependency_overrides[require_write] = lambda: {"user_id": "test-admin", "role": "Administrator"}
+    app.dependency_overrides[require_upload] = lambda: {"user_id": "test-admin", "role": "Administrator"}
 
     try:
         client = TestClient(app)

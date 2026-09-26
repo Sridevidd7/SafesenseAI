@@ -308,13 +308,37 @@ def test_upload_requires_authentication():
     assert client.post("/upload", files=files).status_code == 401
 
 
-def test_upload_forbidden_for_read_only_role():
-    """Viewer-role token on the upload alias must be rejected (403)."""
+def test_upload_allowed_for_viewer_role():
+    """Viewer-role token can upload reports (200 on /api/upload, 201 on /api/reports/upload)."""
     token = _make_user("phase7.viewer@plantco.com", "Viewer")
     files = {"file": ("ok.csv", io.BytesIO(b"description\nsafe observation text here"), "text/csv")}
     response = client.post("/api/upload", files=files,
                            headers={"Authorization": f"Bearer {token}"})
-    assert response.status_code == 403
+    assert response.status_code == 200
+
+    files2 = {"file": ("ok2.csv", io.BytesIO(b"description\nsafe observation text here"), "text/csv")}
+    response2 = client.post("/api/reports/upload", files=files2,
+                            headers={"Authorization": f"Bearer {token}"})
+    assert response2.status_code == 201
+
+
+def test_viewer_forbidden_from_admin_and_write_operations():
+    """Viewer role must remain forbidden from admin reset and operational writes (403)."""
+    token = _make_user("phase7.viewer@plantco.com", "Viewer")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Admin reset forbidden for Viewer
+    admin_resp = client.post("/api/admin/reset-db", headers=headers)
+    assert admin_resp.status_code == 403
+    assert "administrator role required" in admin_resp.json()["detail"].lower()
+
+    # Action creation (operational write) forbidden for Viewer
+    action_resp = client.post(
+        "/api/actions",
+        json={"title": "Test Action", "assigned_to": "Test User", "due_date": "2026-12-31"},
+        headers=headers,
+    )
+    assert action_resp.status_code == 403
 
 
 # =========================================================================

@@ -389,7 +389,7 @@ export async function uploadReportsCSV(file: File): Promise<UploadResult> {
       throw new UploadApiError('Your session has expired. Please sign in again.', 401, false);
     }
     if (res.status === 403) {
-      throw new UploadApiError('You do not have permission to upload reports. Administrator or HSE Officer role required.', 403, false);
+      throw new UploadApiError('You do not have permission to upload reports.', 403, false);
     }
     if (res.status === 413) {
       throw new UploadApiError('File is too large. Maximum allowed size is 15 MB.', 413, false);
