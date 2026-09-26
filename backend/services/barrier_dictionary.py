@@ -16,6 +16,7 @@ import re
 import string
 import logging
 import difflib
+from functools import lru_cache
 
 logger = logging.getLogger("safesense.barrier_dictionary")
 
@@ -116,6 +117,7 @@ FUZZY_SAFETY_VOCAB: List[str] = [
 PUNCTUATION_TRANSLATOR = str.maketrans(string.punctuation, " " * len(string.punctuation))
 
 
+@lru_cache(maxsize=4096)
 def normalize_text(text: str) -> str:
     """
     Robust Input Normalization:
@@ -155,7 +157,7 @@ def normalize_text(text: str) -> str:
             corrected_tokens.append(tok)
 
     normalized_str = " ".join(corrected_tokens)
-    logger.info(f"[INPUT_NORMALIZED] input='{text[:60]}...' normalized='{normalized_str[:60]}...'")
+    logger.debug(f"[INPUT_NORMALIZED] input='{text[:60]}...' normalized='{normalized_str[:60]}...'")
     return normalized_str
 
 
