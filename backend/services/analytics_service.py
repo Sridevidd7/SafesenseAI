@@ -278,6 +278,20 @@ def clear_pattern_intelligence_cache() -> None:
         pass
 
 
+def invalidate_analytics_cache() -> None:
+    """Fast non-blocking cache invalidation for dataset mutations (bulk upload, report creation, reset).
+    Clears LLM cache and pattern intelligence cache so subsequent analytics and dashboard requests
+    lazily recompute using the fresh dataset version.
+    """
+    try:
+        CACHE.clear()
+    except Exception as exc:
+        logger.warning(f"Error clearing LLM cache: {exc}")
+    clear_pattern_intelligence_cache()
+    logger.info("Analytics caches invalidated (lazy recompute on next request).")
+
+
+
 def get_pattern_intelligence(db: Session) -> dict[str, Any]:
     """
     Comprehensive Insight & Pattern Engine:

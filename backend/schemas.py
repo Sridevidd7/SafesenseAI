@@ -220,6 +220,8 @@ class UploadResponse(BaseModel):
     pii_detected_count: int  = Field(default=0, description="Number of uploaded rows with PII redacted")
     pii_total_redacted: int  = Field(default=0, description="Total number of PII items sanitized")
     description_column: str  = Field(default="", description="Column name used as 'description'")
+    success:            bool = Field(default=True, description="Whether upload succeeded")
+    database_total:     int  = Field(default=0, description="Total reports in database after upload")
 
 
 # â”€â”€â”€ Dashboard schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

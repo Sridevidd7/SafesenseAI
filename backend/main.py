@@ -156,7 +156,7 @@ app.include_router(copilot_router)
 # Same write authorization as the /api/reports/upload ingestion endpoint.
 @app.post("/api/upload", response_model=UploadResponse, tags=["Upload"], dependencies=[Depends(require_write)])
 @app.post("/upload", response_model=UploadResponse, tags=["Upload"], dependencies=[Depends(require_write)])
-async def direct_upload_file(
+def direct_upload_file(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
@@ -168,7 +168,7 @@ async def direct_upload_file(
             detail=f"File extension '{ext}' is not supported. Upload a .csv, .xlsx, or .xls file.",
         )
 
-    raw_bytes = await file.read()
+    raw_bytes = file.file.read()
     if len(raw_bytes) == 0:
         raise HTTPException(status_code=422, detail="Uploaded file is empty (0 bytes).")
 
@@ -202,6 +202,8 @@ async def direct_upload_file(
         pii_detected_count=result.pii_detected_count,
         pii_total_redacted=result.pii_total_redacted,
         description_column=result.description_column,
+        success=getattr(result, "success", True),
+        database_total=getattr(result, "database_total", 0),
     )
 
 

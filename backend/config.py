@@ -76,7 +76,7 @@ class Settings:
     allowed_origins: List[str] = field(
         default_factory=lambda: [
             o.strip()
-            for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
+            for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173,https://safesenseai.onrender.com").split(",")
             if o.strip()
         ]
     )

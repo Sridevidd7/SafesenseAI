@@ -235,7 +235,7 @@ _ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xls"}
         "Returns processing statistics and a 5-row sample."
     ),
 )
-async def upload_csv(
+def upload_csv(
     file: UploadFile = File(
         ...,
         description="CSV or Excel file with a 'description' column",
@@ -257,7 +257,7 @@ async def upload_csv(
 
     # ── Read bytes & enforce file size limit ──────────────────────────────────
     from config import settings
-    raw_bytes = await file.read()
+    raw_bytes = file.file.read()
     if len(raw_bytes) == 0:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -303,4 +303,6 @@ async def upload_csv(
         pii_detected_count = result.pii_detected_count,
         pii_total_redacted = result.pii_total_redacted,
         description_column = result.description_column,
+        success            = getattr(result, "success", True),
+        database_total     = getattr(result, "database_total", 0),
     )

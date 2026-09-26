@@ -27,7 +27,7 @@ from services.risk_engine import (
     calculate_risk_score as engine_calculate_risk_score,
     analyze_report as engine_analyze_report,
 )
-from services.analytics_service import refresh_analytics_cache
+from services.analytics_service import refresh_analytics_cache, invalidate_analytics_cache
 
 logger = logging.getLogger("safesense.ingestion")
 logging.basicConfig(level=logging.INFO)
@@ -229,7 +229,7 @@ def insert_report(
         db.commit()
         db.refresh(new_report)
         if refresh_cache:
-            refresh_analytics_cache(db)
+            invalidate_analytics_cache()
 
     logger.info(
         f"[{datetime.now(timezone.utc).isoformat()}] EVENT=ingestion_report_created "

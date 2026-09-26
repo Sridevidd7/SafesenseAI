@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import io
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
@@ -30,7 +31,7 @@ from services.report_service import (
     normalize_text,
     normalize_date,
 )
-from services.analytics_service import refresh_analytics_cache
+from services.analytics_service import invalidate_analytics_cache, get_total_reports
 from services.pii_service import redact_pii
 
 logger = logging.getLogger("safesense.upload")
@@ -97,6 +98,8 @@ class UploadResult:
     description_column: str          = ""
     pii_detected_count: int          = 0
     pii_total_redacted: int          = 0
+    success:            bool         = True
+    database_total:     int          = 0
 
 
 # ─── Internal helpers ─────────────────────────────────────────────────────────
@@ -165,7 +168,18 @@ def process_csv_upload(
     Full pipeline: parse → validate → deduplicate → analyse → persist → auto-refresh.
     """
     # ── 1. Parse file ─────────────────────────────────────────────────────────
+    t_start = time.time()
+    logger.info(
+        f"[{datetime.now(timezone.utc).isoformat()}] EVENT=UPLOAD_START "
+        f"FILENAME={filename} BYTES={len(file_bytes)}"
+    )
+
     df = _parse_bytes(file_bytes, filename)
+
+    logger.info(
+        f"[{datetime.now(timezone.utc).isoformat()}] EVENT=UPLOAD_PARSED "
+        f"FILENAME={filename} ROWS={len(df)} ELAPSED_MS={round((time.time() - t_start) * 1000, 1)}"
+    )
 
     if df.empty:
         raise ValueError(
@@ -335,33 +349,62 @@ def process_csv_upload(
         )
         db_objects.append(db_obj)
 
+    logger.info(
+        f"[{datetime.now(timezone.utc).isoformat()}] EVENT=UPLOAD_ANALYSIS_COMPLETE "
+        f"FILENAME={filename} VALID_REPORTS={len(db_objects)} DUPLICATES={duplicates_skipped} "
+        f"SKIPPED={skipped} ELAPSED_MS={round((time.time() - t_start) * 1000, 1)}"
+    )
+
     if not db_objects and duplicates_skipped == 0:
         raise ValueError(
             f"No valid rows found in '{filename}'. "
             f"All {skipped} row(s) were skipped ({skipped_reasons[0] if skipped_reasons else 'empty descriptions'})."
         )
 
-    # ── 5. Bulk insert & automatic analytics cache refresh ────────────────────
-    if db_objects:
-        db.add_all(db_objects)
-        db.commit()
-        # Automatically refresh analytics cache after inserting new records
-        refresh_analytics_cache(db)
-
-    # Track uploaded file hash for idempotent file-level tracking
+    # ── 5. Bulk insert & atomic persistence ──────────────────────────────────
     file_hash = hashlib.md5(file_bytes).hexdigest()
-    try:
-        existing_file = db.query(UploadedFile).filter(UploadedFile.file_hash == file_hash).first()
-        if not existing_file:
-            uploaded_file_record = UploadedFile(
-                file_hash   = file_hash,
-                filename    = filename,
-                uploaded_at = now,
-            )
-            db.add(uploaded_file_record)
+    existing_file = db.query(UploadedFile).filter(UploadedFile.file_hash == file_hash).first()
+
+    if db_objects or not existing_file:
+        try:
+            if db_objects:
+                db.add_all(db_objects)
+            if not existing_file:
+                uploaded_file_record = UploadedFile(
+                    file_hash   = file_hash,
+                    filename    = filename,
+                    uploaded_at = now,
+                )
+                db.add(uploaded_file_record)
             db.commit()
-    except Exception:
-        db.rollback()
+            logger.info(
+                f"[{datetime.now(timezone.utc).isoformat()}] EVENT=UPLOAD_DB_COMMIT "
+                f"FILENAME={filename} INSERTED={len(db_objects)} ELAPSED_MS={round((time.time() - t_start) * 1000, 1)}"
+            )
+        except Exception as exc:
+            db.rollback()
+            logger.error(
+                f"[{datetime.now(timezone.utc).isoformat()}] EVENT=UPLOAD_DB_ERROR "
+                f"FILENAME={filename} ERROR={str(exc)} ELAPSED_MS={round((time.time() - t_start) * 1000, 1)}"
+            )
+            raise
+
+    # ── 6. Fast non-blocking cache invalidation ──────────────────────────────
+    try:
+        invalidate_analytics_cache()
+        logger.info(
+            f"[{datetime.now(timezone.utc).isoformat()}] EVENT=UPLOAD_CACHE_INVALIDATED "
+            f"FILENAME={filename} ELAPSED_MS={round((time.time() - t_start) * 1000, 1)}"
+        )
+    except Exception as exc:
+        logger.warning(f"Non-fatal error invalidating analytics cache: {exc}")
+
+    # Authoritative current database count for client confirmation
+    database_total = 0
+    try:
+        database_total = get_total_reports(db)
+    except Exception as exc:
+        logger.warning(f"Could not read total reports count: {exc}")
 
     msg = (
         f"Successfully ingested {len(db_objects)} new reports."
@@ -370,8 +413,9 @@ def process_csv_upload(
     )
 
     logger.info(
-        f"[{datetime.now(timezone.utc).isoformat()}] EVENT=bulk_upload_completed "
-        f"FILENAME={filename} INSERTED={len(db_objects)} DUPLICATES={duplicates_skipped} TOTAL_ROWS={len(df)}"
+        f"[{datetime.now(timezone.utc).isoformat()}] EVENT=UPLOAD_COMPLETE "
+        f"FILENAME={filename} INSERTED={len(db_objects)} DUPLICATES={duplicates_skipped} "
+        f"TOTAL_ROWS={len(df)} DATABASE_TOTAL={database_total} TOTAL_ELAPSED_MS={round((time.time() - t_start) * 1000, 1)}"
     )
 
     return UploadResult(
@@ -392,4 +436,6 @@ def process_csv_upload(
         pii_detected_count = pii_rows_count,
         pii_total_redacted = pii_total_count,
         description_column = desc_col,
+        success            = True,
+        database_total     = database_total,
     )

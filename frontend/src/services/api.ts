@@ -76,6 +76,8 @@ export interface UploadResult {
   pii_detected_count?: number;
   risk_summary?:      Record<string, number>;
   description_column?: string;
+  success?:            boolean;
+  database_total?:     number;
   sample?: Array<{
     row_index:     number;
     saved_id:      string;
@@ -89,6 +91,37 @@ export interface UploadResult {
     activity?:     string;
     date?:         string;
   }>;
+}
+
+export class UploadApiError extends Error {
+  status?: number;
+  isAmbiguous: boolean;
+
+  constructor(message: string, status?: number, isAmbiguous: boolean = false) {
+    super(message);
+    this.name = 'UploadApiError';
+    this.status = status;
+    this.isAmbiguous = isAmbiguous;
+  }
+}
+
+export function isAmbiguousUploadError(error: unknown): boolean {
+  if (error instanceof UploadApiError) {
+    return error.isAmbiguous;
+  }
+  if (error instanceof Error) {
+    const msg = error.message.toLowerCase();
+    return (
+      msg.includes('502') ||
+      msg.includes('503') ||
+      msg.includes('504') ||
+      msg.includes('failed to fetch') ||
+      msg.includes('network') ||
+      msg.includes('temporarily unavailable') ||
+      msg.includes('connection timed out')
+    );
+  }
+  return false;
 }
 
 // â”€â”€â”€ Base fetch wrapper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -334,14 +367,44 @@ export async function uploadReportsCSV(file: File): Promise<UploadResult> {
     // ignore
   }
 
-  const res = await fetch(getApiUrl('/reports/upload'), {
-    method: 'POST',
-    body:   form,
-    headers,
-  });
+  let res: Response;
+  try {
+    res = await fetch(getApiUrl('/reports/upload'), {
+      method: 'POST',
+      body:   form,
+      headers,
+    });
+  } catch {
+    // Network failure, connection drop, or reverse-proxy 502 where CORS headers were omitted
+    throw new UploadApiError(
+      'Could not reach SafeSense backend or the upload status could not be confirmed. Check the connection and refresh before retrying.',
+      undefined,
+      true // ambiguous failure: database commit may already have succeeded
+    );
+  }
 
   if (!res.ok) {
-    if (res.status === 401) handleUnauthorized();
+    if (res.status === 401) {
+      handleUnauthorized();
+      throw new UploadApiError('Your session has expired. Please sign in again.', 401, false);
+    }
+    if (res.status === 403) {
+      throw new UploadApiError('You do not have permission to upload reports. Administrator or HSE Officer role required.', 403, false);
+    }
+    if (res.status === 413) {
+      throw new UploadApiError('File is too large. Maximum allowed size is 15 MB.', 413, false);
+    }
+    if (res.status === 429) {
+      throw new UploadApiError('Too many requests. Please wait and try again.', 429, false);
+    }
+    if (res.status === 502 || res.status === 503 || res.status === 504) {
+      throw new UploadApiError(
+        'SafeSense backend is temporarily unavailable or the upload status could not be confirmed. Refresh before retrying.',
+        res.status,
+        true // ambiguous failure
+      );
+    }
+
     let detail = `HTTP ${res.status}`;
     try {
       const body = await res.json();
@@ -349,7 +412,15 @@ export async function uploadReportsCSV(file: File): Promise<UploadResult> {
     } catch {
       // ignore
     }
-    throw new Error(detail);
+
+    if (res.status === 422) {
+      throw new UploadApiError(`Upload validation failed: ${detail}`, 422, false);
+    }
+    if (res.status >= 500) {
+      throw new UploadApiError('SafeSense backend encountered an internal error.', res.status, true);
+    }
+
+    throw new UploadApiError(detail, res.status, false);
   }
 
   const json = await res.json();

@@ -25,7 +25,7 @@ import { detectColumnMapping, analyzeDatasetQuality, formatFileSize } from '../u
 import { processDataset } from '../utils/multilingualUtils';
 import { ColumnMapping, MultilingualStats } from '../types';
 import { MultilingualStatsBanner, LanguageBadge } from '../components/MultilingualBadge';
-import { uploadReportsCSV, UploadResult } from '../services/api';
+import { uploadReportsCSV, UploadResult, isAmbiguousUploadError, fetchDashboardStats } from '../services/api';
 
 type Step = 'upload' | 'preview' | 'mapping' | 'quality';
 
@@ -74,22 +74,42 @@ export default function UploadPage() {
   const [uploading,   setUploading]   = useState(false);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const [uploadError, setUploadError] = useState('');
+  const [isAmbiguous, setIsAmbiguous] = useState(false);
+  const [reconciling, setReconciling] = useState(false);
+  const [reconciledCount, setReconciledCount] = useState<number | null>(null);
+
+  // ── Safe Database Reconciliation ──────────────────────────────────────────
+  async function reconcileDatabaseState() {
+    setReconciling(true);
+    try {
+      const stats = await fetchDashboardStats();
+      setReconciledCount(stats.total_reports);
+      window.dispatchEvent(new CustomEvent('safesense:data-updated'));
+    } catch {
+      setReconciledCount(null);
+    }
+    setReconciling(false);
+  }
 
   // ── Backend upload ────────────────────────────────────────────────────────
   async function uploadToBackend(file: File) {
     setUploading(true);
     setUploadError('');
+    setIsAmbiguous(false);
     setUploadResult(null);
+    setReconciledCount(null);
     try {
       const result = await uploadReportsCSV(file);
       setUploadResult(result);
       window.dispatchEvent(new CustomEvent('safesense:data-updated'));
       setTimeout(() => navigate('/app/dashboard'), 2500);
     } catch (err) {
+      const ambiguous = isAmbiguousUploadError(err);
+      setIsAmbiguous(ambiguous);
       setUploadError(
         err instanceof Error
           ? err.message
-          : 'Upload failed. Make sure the backend is running on port 8000.'
+          : 'Upload failed. SafeSense backend could not be reached.'
       );
     }
     setUploading(false);
@@ -260,13 +280,57 @@ export default function UploadPage() {
                 </label>
 
                 {uploadError && (
-                  <div className="mt-4 flex items-start gap-2.5 text-red-900 bg-red-50 border border-red-200 rounded-lg p-3.5 text-sm">
-                    <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
-                    <div>
-                      <p className="font-semibold text-red-900">Upload failed</p>
-                      <p className="text-xs text-red-700 mt-0.5">{uploadError}</p>
+                  isAmbiguous ? (
+                    <div className="mt-4 p-4 bg-amber-50 border border-amber-300 rounded-lg text-amber-950 animate-in fade-in">
+                      <div className="flex items-start gap-2.5">
+                        <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                        <div className="flex-1">
+                          <p className="text-sm font-bold text-amber-900">
+                            Upload status uncertain
+                          </p>
+                          <p className="text-xs text-amber-800 mt-1">
+                            {uploadError}
+                          </p>
+                          <p className="text-xs text-amber-700 mt-1">
+                            The backend database transaction may already have committed before the connection timed out. Do not re-upload the same file immediately.
+                          </p>
+                          <div className="mt-3 flex items-center gap-3">
+                            <button
+                              type="button"
+                              onClick={reconcileDatabaseState}
+                              disabled={reconciling}
+                              className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded text-xs font-semibold shadow-xs disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                            >
+                              {reconciling ? (
+                                <>
+                                  <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                  Checking database...
+                                </>
+                              ) : (
+                                <>
+                                  <Server className="w-3.5 h-3.5" />
+                                  Refresh Database State
+                                </>
+                              )}
+                            </button>
+                            {reconciledCount !== null && (
+                              <span className="text-xs font-semibold text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded border border-emerald-200">
+                                Database state synchronized: {reconciledCount} verified reports in database
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="mt-4 flex items-start gap-2.5 text-red-900 bg-red-50 border border-red-200 rounded-lg p-3.5 text-sm">
+                      <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-semibold text-red-900">Upload failed</p>
+                        <p className="text-xs text-red-700 mt-0.5">{uploadError}</p>
+                      </div>
+                    </div>
+                  )
                 )}
 
                 {uploadResult && (
@@ -332,7 +396,9 @@ export default function UploadPage() {
                           </span>
                         </div>
                       )}
-                      <p className="text-xs text-green-700 font-medium mt-1">Redirecting to dashboard…</p>
+                      <p className="text-xs text-green-700 font-medium mt-1">
+                        Database synchronized {uploadResult.database_total ? `(${uploadResult.database_total} total records in database)` : ''} · Redirecting to dashboard…
+                      </p>
                     </div>
                   )
                 )}
@@ -574,13 +640,57 @@ export default function UploadPage() {
 
           {/* Upload error from this step */}
           {uploadError && (
-            <div className="flex items-start gap-2.5 text-red-900 bg-red-50 border border-red-200 rounded-lg p-4 text-sm">
-              <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="font-semibold text-red-900">Upload failed</p>
-                <p className="text-xs text-red-700 mt-0.5">{uploadError}</p>
+            isAmbiguous ? (
+              <div className="mt-4 p-4 bg-amber-50 border border-amber-300 rounded-lg text-amber-950 animate-in fade-in">
+                <div className="flex items-start gap-2.5">
+                  <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="text-sm font-bold text-amber-900">
+                      Upload status uncertain
+                    </p>
+                    <p className="text-xs text-amber-800 mt-1">
+                      {uploadError}
+                    </p>
+                    <p className="text-xs text-amber-700 mt-1">
+                      The backend database transaction may already have committed before the connection timed out. Do not re-upload the same file immediately.
+                    </p>
+                    <div className="mt-3 flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={reconcileDatabaseState}
+                        disabled={reconciling}
+                        className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded text-xs font-semibold shadow-xs disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                      >
+                        {reconciling ? (
+                          <>
+                            <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                            Checking database...
+                          </>
+                        ) : (
+                          <>
+                            <Server className="w-3.5 h-3.5" />
+                            Refresh Database State
+                          </>
+                        )}
+                      </button>
+                      {reconciledCount !== null && (
+                        <span className="text-xs font-semibold text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded border border-emerald-200">
+                          Database state synchronized: {reconciledCount} verified reports in database
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="flex items-start gap-2.5 text-red-900 bg-red-50 border border-red-200 rounded-lg p-4 text-sm">
+                <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-semibold text-red-900">Upload failed</p>
+                  <p className="text-xs text-red-700 mt-0.5">{uploadError}</p>
+                </div>
+              </div>
+            )
           )}
 
           {/* Upload result feedback in Step 4 */}
@@ -616,7 +726,9 @@ export default function UploadPage() {
                     </span>
                   </div>
                 )}
-                <p className="text-xs text-green-700 font-medium">Redirecting to dashboard…</p>
+                <p className="text-xs text-green-700 font-medium">
+                  Database synchronized {uploadResult.database_total ? `(${uploadResult.database_total} total records in database)` : ''} · Redirecting to dashboard…
+                </p>
               </div>
             )
           )}
