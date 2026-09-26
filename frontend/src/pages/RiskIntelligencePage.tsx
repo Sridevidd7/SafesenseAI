@@ -132,7 +132,7 @@ export default function RiskIntelligencePage() {
   // Failed barrier frequencies
   const barriers = useMemo(() => computeBarrierFailures(mappedReports), [mappedReports]);
 
-  // Monthly trend: Use backend SQLite aggregation
+  // Monthly trend: backend SQL aggregation over the safety database
   const monthlyData = useMemo(() => {
     if (trends && trends.length > 0) return trends;
 
@@ -250,7 +250,7 @@ export default function RiskIntelligencePage() {
             onClick={handleRefresh}
             disabled={refreshing}
             className="btn-secondary text-xs py-1.5 px-3"
-            title="Refresh analytics from SQLite database"
+            title="Refresh analytics from the safety database"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-blue-600' : ''}`} />
             <span>{refreshing ? 'Refreshing...' : 'Refresh'}</span>
@@ -263,7 +263,7 @@ export default function RiskIntelligencePage() {
         <KpiCard
           label="Total Reports"
           value={reports.length}
-          subtext="Stored in SQLite"
+          subtext="Stored in the verified safety database"
           icon={Database}
           variant="blue"
         />

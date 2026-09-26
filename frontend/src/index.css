@@ -89,6 +89,42 @@
   }
 }
 
+/* ─── SafeSense homepage animation layer ───────────────────────────────────── */
+
+/* Animated dashed flow line used in the intelligence pipeline connector rail. */
+@keyframes safesense-flow {
+  to {
+    stroke-dashoffset: -20;
+  }
+}
+.safesense-flow-line {
+  animation: safesense-flow 1.1s linear infinite;
+}
+
+/* Subtle glow pulse for the active pipeline node. */
+@keyframes safesense-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 18px 2px rgba(59, 130, 246, 0.45);
+  }
+}
+.safesense-node-glow {
+  animation: safesense-glow 1.6s ease-in-out infinite;
+}
+
+/* Respect users who prefer reduced motion everywhere. */
+@media (prefers-reduced-motion: reduce) {
+  .safesense-flow-line,
+  .safesense-node-glow {
+    animation: none;
+  }
+  html {
+    scroll-behavior: auto;
+  }
+}
+
 @keyframes fadeIn {
   from {
     opacity: 0;

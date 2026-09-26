@@ -1,226 +1,673 @@
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { motion, useInView, useReducedMotion } from 'framer-motion';
 import {
-  Shield, Brain, TrendingUp, AlertTriangle, GitBranch,
-  CheckCircle, ArrowRight, Upload, Play, Zap, Target, Eye, BarChart2,
+  Shield, ShieldCheck, Brain, TrendingUp, AlertTriangle, GitBranch, CheckCircle,
+  ArrowRight, ArrowDown, Upload, Zap, Target, Eye, BarChart2, FileText, ScanSearch,
+  Activity, Layers, MessageSquare, Lock, UserCheck, Play,
+  AlertOctagon, Radio, Gauge, AlertCircle, LogIn,
 } from 'lucide-react';
+import { useApp } from '../context/AppContext';
 
-const PIPELINE_STEPS = [
-  { icon: '📋', label: 'Safety Reports',      sub: 'Unsafe Act · Near Miss · Incident' },
-  { icon: '🤖', label: 'AI / NLP Engine',     sub: 'Text Processing · Entity Extraction' },
-  { icon: '⚠️', label: 'Risk Detection',      sub: 'SIF Potential · Risk Score' },
-  { icon: '📌', label: 'Safety Rule Mapping', sub: 'Life-Saving Rules · Barriers' },
-  { icon: '🔁', label: 'Pattern Discovery',    sub: 'Recurring Precursors · Clusters' },
-  { icon: '✅', label: 'Preventive Action',    sub: 'Recommendations · Review' },
+/* ══════════════════════════════════════════════════════════════════════════════
+   Showcase data — clearly labeled illustrative/demo values (NOT live backend
+   results). The pipeline animation is a visual explanation of the workflow.
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+const SHOWCASE_REPORTS = [
+  { id: 'SAF-2024-0142', fragments: ['Confined space entry…', 'Gas testing not completed…', 'Energy isolation not applied…'] },
+  { id: 'SAF-2024-0177', fragments: ['Scaffold erection at height…', 'Fall-arrest harness unclipped…', 'Rescue plan not in place…'] },
+  { id: 'SAF-2024-0203', fragments: ['Pump maintenance underway…', 'LOTO not verified…', 'Live electrical panel open…'] },
+  { id: 'SAF-2024-0236', fragments: ['Hot work permit issued…', 'Fire watch absent…', 'Combustibles within 10 m…'] },
 ];
 
-const REPORT_TYPES = [
-  { icon: '⚡', title: 'Unsafe Act',       color: 'border-orange-200 bg-orange-50/60', textColor: 'text-orange-700', desc: 'A person doing something unsafe — deviation from an established safety procedure or accepted safe practice.' },
-  { icon: '🏗️', title: 'Unsafe Condition', color: 'border-amber-200 bg-amber-50/60',   textColor: 'text-amber-700',  desc: 'A physical condition or environment that increases the probability of an accident or incident occurring.' },
-  { icon: '🔶', title: 'Near Miss',        color: 'border-yellow-200 bg-yellow-50/60', textColor: 'text-yellow-700', desc: 'An unplanned event that did not result in injury or damage but had the potential to do so — a warning signal.' },
-  { icon: '🚨', title: 'Incident',         color: 'border-red-200 bg-red-50/60',       textColor: 'text-red-700',    desc: 'An unplanned event that caused or could have caused injury, illness, or damage. A critical learning opportunity.' },
+const HERO_INDICATORS = [
+  { label: 'SIF POTENTIAL', value: 33, tone: 'text-red-400', icon: Target },
+  { label: 'CRITICAL', value: 12, tone: 'text-orange-400', icon: AlertCircle },
+  { label: 'ACTIVE PATTERNS', value: 5, tone: 'text-blue-400', icon: GitBranch },
+  { label: 'RISING PRECURSORS', value: 3, tone: 'text-amber-400', icon: TrendingUp },
 ];
 
-const SIF_EXAMPLES = [
-  'Confined-space entry without required atmospheric testing',
-  'Maintenance performed without energy isolation (LOTO)',
-  'Hot work carried out without a valid permit or fire watch',
-  'Worker positioned in the line of fire of a suspended load',
-  'Working at height without fall-arrest protection',
-  'Exposure to live electrical conductors without isolation',
+const WORKFLOW_STAGES = [
+  { n: '01', key: 'INGEST',   icon: FileText,    title: 'Ingest',    desc: 'Safety reports arrive as free text — observations, near misses, incidents — via upload or direct entry.' },
+  { n: '02', key: 'UNDERSTAND', icon: Brain,    title: 'Understand', desc: 'NLP extracts hazards, activities and safety concepts, with multilingual detection and PII redaction.' },
+  { n: '03', key: 'DETECT',   icon: Target,      title: 'Detect',    desc: 'Deterministic engines flag SIF precursors and map Life-Saving Rule exposure with full evidence.' },
+  { n: '04', key: 'EXPLAIN',  icon: ScanSearch,  title: 'Explain',   desc: 'Every risk score is explainable — weighted factors, failed barriers and the exact phrases that triggered them.' },
+  { n: '05', key: 'DISCOVER', icon: GitBranch,   title: 'Discover',  desc: 'Pattern clustering and trend analysis surface recurring precursor combinations across sites and time.' },
+  { n: '06', key: 'ACT',      icon: CheckCircle, title: 'Act',       desc: 'Preventive actions, HITL review and grounded Copilot answers turn intelligence into intervention.' },
 ];
 
-const FEATURES = [
-  { icon: Brain,      title: 'AI-Powered NLP Analysis',   desc: 'Natural language processing reads, understands, and classifies safety observations automatically.' },
-  { icon: Target,     title: 'SIF Precursor Detection',   desc: 'Identifies conditions that may indicate elevated potential for a serious injury or fatality.' },
-  { icon: Eye,        title: 'Explainable AI',             desc: 'Shows exactly which phrases triggered the risk flag and why — no black-box decisions.' },
-  { icon: GitBranch,  title: 'Pattern Discovery',        desc: 'Discovers recurring safety failure patterns across sites and activities using clustering.' },
-  { icon: TrendingUp, title: 'Trend Intelligence',      desc: 'Detects rising frequencies of safety precursors over time to enable earlier intervention.' },
-  { icon: BarChart2,  title: 'Executive Dashboard',     desc: 'KPI-driven dashboard for HSE leadership to prioritize action and track safety performance.' },
+const WHY_STEPS = [
+  {
+    label: 'THE PROBLEM', tone: 'slate',
+    icon: Layers,
+    title: 'Safety teams drown in unstructured observations.',
+    desc: 'Thousands of free-text reports, near misses and unsafe-condition notes arrive every month across sites, units and activities.',
+  },
+  {
+    label: 'THE GAP', tone: 'amber',
+    icon: AlertCircle,
+    title: 'Critical precursor signals stay buried.',
+    desc: 'The report that says “gas testing not completed” rarely announces itself. Serious-risk signals hide across reports, sites, activities and time.',
+  },
+  {
+    label: 'THE SOLUTION', tone: 'blue',
+    icon: ShieldCheck,
+    title: 'SafeSense connects report-level evidence to system-level intelligence.',
+    desc: 'Deterministic engines score every report, map barriers and Life-Saving Rules, and cluster recurring exposures into patterns you can act on.',
+  },
 ];
 
-export default function HomePage() {
-  const navigate = useNavigate();
+const SIF_CHAIN = [
+  { label: 'SIF PRECURSOR', detail: 'Elevated-risk condition observed in a report', icon: AlertTriangle },
+  { label: 'FAILED BARRIER', detail: 'The control that should have prevented exposure', icon: Shield },
+  { label: 'EXPOSURE', detail: 'A person was (or could have been) in the line of fire', icon: Activity },
+  { label: 'POTENTIAL SERIOUS CONSEQUENCE', detail: 'What could have happened — and what prevention avoids', icon: AlertCircle },
+];
+
+const CAPABILITIES = [
+  { icon: Target,      title: 'SIF Precursor Detection',      desc: 'Deterministic identification of conditions with elevated serious-injury potential — evidence-first, explainable.' },
+  { icon: ScanSearch,  title: 'Explainable Risk Analysis',    desc: 'Weighted factor breakdowns and evidence phrases for every score. No black boxes — every point is accounted for.' },
+  { icon: Shield,      title: 'Life-Saving Rule Mapping',     desc: 'Automatic LSR classification across the rule set, with secondary-rule context and confidence reasoning.' },
+  { icon: Layers,      title: 'Barrier Failure Intelligence', desc: 'Which controls failed, how often, and in combination with which activities and hazards.' },
+  { icon: GitBranch,   title: 'Pattern Discovery',            desc: 'Similarity clustering exposes recurring precursor combinations that no single report reveals.' },
+  { icon: TrendingUp,  title: 'Trend & Anomaly Detection',    desc: 'Rising precursor frequencies and site concentration spikes surfaced with early warnings.' },
+  { icon: MessageSquare, title: 'Grounded Safety Copilot',    desc: 'Ask questions in plain language; get answers synthesized strictly from your verified safety database, with citations.' },
+  { icon: Lock,        title: 'PII Protection',               desc: 'Personal identifiers are detected and redacted before analysis, storage and synthesis.' },
+  { icon: UserCheck,   title: 'Human-in-the-Loop Review',     desc: 'Confirm, correct or reject AI analysis. Reviews are audit-trailed; humans stay the authority.' },
+];
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Animation helpers
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+function useCountUp(target: number, active: boolean, duration = 1100): number {
+  const [value, setValue] = useState(0);
+  const reduced = useReducedMotion();
+  useEffect(() => {
+    if (!active) return;
+    if (reduced) { setValue(target); return; }
+    let raf = 0;
+    const start = performance.now();
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setValue(Math.round(target * eased));
+      if (t < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [active, target, duration, reduced]);
+  return value;
+}
+
+/* ─── Hero: animated intelligence pipeline console ──────────────────────────── */
+
+interface StageNode {
+  id: string;
+  label: string;
+  sub: string;
+  icon: typeof Brain;
+  alert?: boolean;
+  done?: boolean;
+}
+
+const STAGE_SEQUENCE: StageNode[] = [
+  { id: 'nlp',      label: 'AI / NLP',            sub: 'Concepts extracted', icon: Brain },
+  { id: 'sif',      label: 'SIF PRECURSOR DETECTED', sub: 'Elevated serious-risk signal', icon: Target, alert: true },
+  { id: 'risk',     label: 'RISK SCORE: 89',      sub: 'CRITICAL', icon: Gauge, alert: true },
+  { id: 'barrier',  label: 'BARRIER FAILURE',     sub: 'Gas Testing Not Completed', icon: Shield, alert: true },
+  { id: 'pattern',  label: 'PATTERN MATCH',       sub: 'Recurring Confined-Space Exposure', icon: GitBranch },
+  { id: 'action',   label: 'PREVENTIVE ACTION',   sub: 'Verify gas testing & isolation before entry', icon: CheckCircle, done: true },
+];
+
+function PipelineConsole() {
+  const ref = useRef<HTMLDivElement>(null);
+  const inView = useInView(ref, { once: false, margin: '-40px' });
+  const reduced = useReducedMotion();
+
+  const [reportIdx, setReportIdx] = useState(0);
+  const [step, setStep] = useState(0);          // 0..STAGE_SEQUENCE.length (length = complete)
+  const [cycle, setCycle] = useState(0);        // forces re-type of the report fragment
+
+  const report = SHOWCASE_REPORTS[reportIdx % SHOWCASE_REPORTS.length];
+
+  useEffect(() => {
+    if (!inView || reduced) {
+      if (reduced) setStep(STAGE_SEQUENCE.length);
+      return;
+    }
+    const isLast = step >= STAGE_SEQUENCE.length;
+    const delay = isLast ? 2600 : 1150;
+    const t = setTimeout(() => {
+      if (isLast) {
+        setStep(0);
+        setCycle(c => c + 1);
+        setReportIdx(i => (i + 1) % SHOWCASE_REPORTS.length);
+      } else {
+        setStep(s => s + 1);
+      }
+    }, delay);
+    return () => clearTimeout(t);
+  }, [step, inView, reduced]);
+
+  const stagesShown = reduced ? STAGE_SEQUENCE.length : step;
 
   return (
-    <div className="space-y-16 animate-in">
-
-      {/* ─── Hero ─────────────────────────────────────────────────── */}
-      <section className="text-center py-12">
-        <div className="max-w-4xl mx-auto">
-          <div className="inline-flex items-center gap-2 bg-blue-50 border border-blue-200 text-blue-700 px-4 py-1.5 rounded-full text-xs font-semibold uppercase tracking-wider mb-6">
-            <Shield className="w-4 h-4 text-blue-600" />
-            Enterprise Safety Intelligence Platform
+    <div ref={ref} className="relative">
+      {/* console frame */}
+      <div className="relative rounded-2xl border border-slate-700/60 bg-slate-900/80 backdrop-blur shadow-2xl shadow-black/40 overflow-hidden">
+        {/* header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700/60 bg-slate-900">
+          <div className="flex items-center gap-2.5">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60 motion-reduce:animate-none" />
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+            </span>
+            <span className="text-[11px] font-bold tracking-[0.14em] text-slate-300 uppercase">Intelligence Workflow</span>
           </div>
-          <h1 className="text-4xl md:text-5xl lg:text-6xl font-extrabold text-slate-900 leading-tight mb-5 tracking-tight">
-            From Safety Reports to{' '}
-            <span className="text-blue-600 block">Preventive Action</span>
-          </h1>
-          <p className="text-lg md:text-xl text-slate-600 max-w-2xl mx-auto mb-10 leading-relaxed">
-            AI-powered safety intelligence for identifying serious-risk precursors before they become serious incidents.
-          </p>
-          <div className="flex flex-col sm:flex-row gap-3.5 justify-center">
-            <button onClick={() => navigate('/analysis')} className="btn-primary text-base px-7 py-3">
-              <Brain className="w-5 h-5" />
-              Analyze a Report
-            </button>
-            <button onClick={() => navigate('/upload')} className="btn-secondary text-base px-7 py-3 bg-white hover:bg-slate-50 border-slate-300">
-              <Upload className="w-5 h-5" />
-              Upload Dataset
-            </button>
-            <button onClick={() => navigate('/dashboard')} className="btn-secondary text-base px-7 py-3 bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100">
-              <BarChart2 className="w-5 h-5" />
-              View Dashboard
-            </button>
-          </div>
+          <span className="text-[10px] font-semibold tracking-wider text-amber-400/90 bg-amber-400/10 border border-amber-400/20 px-2 py-0.5 rounded-full uppercase">
+            Illustrative · Demo data
+          </span>
         </div>
-      </section>
 
-      {/* ─── Pipeline ────────────────────────────────────────────── */}
-      <section className="border-t border-slate-200 pt-12">
-        <div className="max-w-6xl mx-auto">
-          <h2 className="text-2xl font-bold text-slate-900 text-center mb-2">How SafeSense AI Works</h2>
-          <p className="text-slate-500 text-center mb-10 text-sm">From raw safety report text to actionable intelligence — in seconds.</p>
-          <div className="flex flex-wrap justify-center items-center gap-3">
-            {PIPELINE_STEPS.map((step, i) => (
-              <div key={i} className="flex items-center gap-3">
-                <div className="pipeline-node flex flex-col items-center min-w-[140px] cursor-default bg-white border border-slate-200 shadow-xs p-4 rounded-xl">
-                  <span className="text-2xl mb-1.5">{step.icon}</span>
-                  <span className="font-bold text-slate-900 text-xs">{step.label}</span>
-                  <span className="text-slate-500 text-xs mt-0.5">{step.sub}</span>
-                </div>
-                {i < PIPELINE_STEPS.length - 1 && (
-                  <ArrowRight className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                )}
+        <div className="p-4 sm:p-5">
+          {/* report card */}
+          <div className="rounded-xl border border-slate-700/60 bg-slate-800/70 p-3.5 sm:p-4">
+            <div className="flex items-center justify-between mb-2.5">
+              <div className="flex items-center gap-2 text-[10px] font-bold tracking-wider text-slate-400 uppercase">
+                <FileText className="w-3.5 h-3.5" aria-hidden />
+                Safety Report · {report.id}
               </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ─── Why it matters ──────────────────────────────────────── */}
-      <section className="border-t border-slate-200 pt-12">
-        <div className="max-w-6xl mx-auto">
-          <div className="grid md:grid-cols-2 gap-10 items-center">
-            <div>
-              <h2 className="text-3xl font-bold text-slate-900 mb-4 tracking-tight">Why Safety Intelligence Matters</h2>
-              <p className="text-slate-600 leading-relaxed mb-4">
-                Organizations receive large volumes of safety observations, unsafe-act reports, near-miss records, and incident reports every day. Critical high-risk information can be buried within large amounts of unstructured text.
-              </p>
-              <p className="text-slate-600 leading-relaxed mb-6">
-                Manual review is slow, inconsistent, and can miss patterns that only become visible across hundreds of reports. SafeSense AI helps safety teams:
-              </p>
-              <ul className="space-y-2.5">
-                {[
-                  'Find high-risk reports faster with AI classification',
-                  'Understand why a report is risky with explainable evidence',
-                  'Identify repeated precursor patterns across sites',
-                  'Detect failed safety controls before they lead to incidents',
-                  'Prioritize corrective actions with confidence',
-                ].map((item, i) => (
-                  <li key={i} className="flex items-start gap-2.5 text-sm text-slate-700">
-                    <CheckCircle className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
-                    {item}
-                  </li>
-                ))}
-              </ul>
+              <span className="text-[10px] font-mono text-slate-500">raw text</span>
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              {REPORT_TYPES.map(rt => (
-                <div key={rt.title} className={`card border ${rt.color} hover:shadow-md transition-all cursor-default p-5`}>
-                  <div className="text-2xl mb-2">{rt.icon}</div>
-                  <div className={`font-bold text-sm mb-1 ${rt.textColor}`}>{rt.title}</div>
-                  <p className="text-slate-600 text-xs leading-relaxed">{rt.desc}</p>
-                </div>
+            <div className="space-y-1.5" aria-live="off">
+              {report.fragments.map((frag, i) => (
+                <motion.div
+                  key={`${report.id}-${cycle}-${i}`}
+                  initial={reduced ? false : { opacity: 0, x: -8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: reduced ? 0 : i * 0.35, duration: 0.4 }}
+                  className="flex items-center gap-2"
+                >
+                  <span className="w-1 h-1 rounded-full bg-blue-400 flex-shrink-0" aria-hidden />
+                  <span className="text-[13px] text-slate-200 font-medium">{frag}</span>
+                </motion.div>
               ))}
             </div>
           </div>
-        </div>
-      </section>
 
-      {/* ─── What is SIF ─────────────────────────────────────────── */}
-      <section className="border-t border-slate-200 pt-12">
-        <div className="max-w-4xl mx-auto">
-          <div className="card border-red-200 bg-red-50/40 p-6 md:p-8">
-            <div className="flex items-start gap-5">
-              <div className="w-12 h-12 rounded-xl bg-red-100 border border-red-200 flex items-center justify-center flex-shrink-0 text-red-600">
-                <AlertTriangle className="w-6 h-6" />
-              </div>
-              <div className="flex-1">
-                <div className="flex items-center gap-3 mb-2">
-                  <h2 className="text-xl font-bold text-slate-900">What is SIF?</h2>
-                  <span className="badge-sif">SIF = Serious Injury or Fatality</span>
-                </div>
-                <p className="text-slate-700 mb-5 leading-relaxed">
-                  A <strong className="text-red-700">SIF precursor</strong> is a warning sign or unsafe condition that may indicate the potential for a serious injury or fatality. SafeSense AI identifies these precursors in safety reports — <em>not</em> to predict that a fatality will definitely occur, but to help safety teams recognize elevated-risk conditions earlier and act preventively.
-                </p>
-                <div>
-                  <p className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-3">Examples of SIF precursors:</p>
-                  <div className="grid sm:grid-cols-2 gap-2.5">
-                    {SIF_EXAMPLES.map((ex, i) => (
-                      <div key={i} className="flex items-start gap-2.5 text-xs text-slate-700 bg-white border border-red-100 rounded-lg p-3 shadow-xs">
-                        <AlertTriangle className="w-3.5 h-3.5 text-red-600 mt-0.5 flex-shrink-0" />
-                        {ex}
-                      </div>
-                    ))}
+          {/* connector rail with pulses */}
+          <div className="relative h-6" aria-hidden>
+            <svg className="absolute inset-0 w-full h-full" preserveAspectRatio="none" viewBox="0 0 10 24">
+              <line x1="5" y1="0" x2="5" y2="24" stroke="rgb(51 65 85)" strokeWidth="2" />
+              <line x1="5" y1="0" x2="5" y2="24" stroke="rgb(59 130 246)" strokeWidth="2"
+                strokeDasharray="4 6" className="safesense-flow-line" opacity={reduced ? 0.4 : 0.9} />
+            </svg>
+          </div>
+
+          {/* stage nodes */}
+          <ol className="space-y-2" aria-label="Intelligence pipeline stages (illustrative)">
+            {STAGE_SEQUENCE.map((s, i) => {
+              const active = stagesShown === i + 1;
+              const completed = stagesShown > i + 1 || stagesShown === STAGE_SEQUENCE.length && active;
+              const visible = stagesShown >= i + 1 || reduced;
+              const Icon = s.icon;
+              return (
+                <motion.li
+                  key={s.id}
+                  initial={reduced ? false : { opacity: 0, y: 10 }}
+                  animate={visible ? { opacity: 1, y: 0 } : { opacity: 0.25, y: 0 }}
+                  transition={{ duration: 0.35 }}
+                  className={`relative rounded-xl border px-3.5 py-3 flex items-center gap-3 transition-colors duration-300 ${
+                    active
+                      ? 'border-blue-500/70 bg-blue-500/10 shadow-lg shadow-blue-950/60'
+                      : s.alert && (active || completed)
+                        ? 'border-red-500/40 bg-red-500/[0.07]'
+                        : s.done && completed
+                          ? 'border-emerald-500/40 bg-emerald-500/[0.07]'
+                          : 'border-slate-700/50 bg-slate-800/40'
+                  }`}
+                  aria-hidden={!visible}
+                >
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 border ${
+                    active ? 'bg-blue-500/20 border-blue-400/50 text-blue-300 safesense-node-glow'
+                    : s.alert && completed ? 'bg-red-500/15 border-red-500/40 text-red-300'
+                    : s.done && completed ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                    : 'bg-slate-700/40 border-slate-600/50 text-slate-400'
+                  }`}>
+                    <Icon className="w-4 h-4" aria-hidden />
                   </div>
-                </div>
-              </div>
+                  <div className="min-w-0 flex-1">
+                    <div className={`text-[12.5px] font-bold tracking-wide ${s.alert && completed ? 'text-red-300' : s.done && completed ? 'text-emerald-300' : active ? 'text-blue-200' : 'text-slate-300'}`}>
+                      {s.label}
+                    </div>
+                    <div className="text-[11.5px] text-slate-400 truncate">{s.sub}</div>
+                  </div>
+                  {active && (
+                    <span className="flex-shrink-0 w-4 h-4 border-2 border-blue-400/40 border-t-blue-300 rounded-full animate-spin motion-reduce:animate-none" aria-hidden />
+                  )}
+                  {completed && !active && (
+                    <CheckCircle className={`w-4 h-4 flex-shrink-0 ${s.done ? 'text-emerald-400' : 'text-slate-500'}`} aria-hidden />
+                  )}
+                  {active && (
+                    <span className="absolute right-3 -top-2 text-[9px] font-bold tracking-widest text-blue-300 bg-slate-900 border border-blue-500/40 rounded-full px-1.5 py-0.5 uppercase">
+                      Processing
+                    </span>
+                  )}
+                </motion.li>
+              );
+            })}
+          </ol>
+        </div>
+
+        {/* footer strip */}
+        <div className="px-4 py-2.5 border-t border-slate-700/60 bg-slate-900/90 flex items-center justify-between">
+          <span className="text-[10px] text-slate-500 font-medium">Deterministic engines · Evidence-grounded · Human-authorized</span>
+          <Radio className="w-3.5 h-3.5 text-slate-600" aria-hidden />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Hero indicators (illustrative counts) ─────────────────────────────────── */
+
+function IndicatorTiles() {
+  const ref = useRef<HTMLDivElement>(null);
+  const inView = useInView(ref, { once: true, margin: '-20px' });
+  const values = HERO_INDICATORS.map(h => useCountUp(h.value, inView));
+
+  return (
+    <div ref={ref} className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      {HERO_INDICATORS.map(({ label, tone, icon: Icon }, i) => (
+        <div key={label} className="rounded-xl border border-slate-700/60 bg-slate-900/70 backdrop-blur px-3.5 py-3">
+          <div className="flex items-center gap-1.5 text-[10px] font-bold tracking-wider text-slate-400 uppercase mb-1.5">
+            <Icon className={`w-3.5 h-3.5 ${tone}`} aria-hidden />
+            {label}
+          </div>
+          <div className={`text-2xl font-extrabold tabular-nums ${tone}`}>{values[i]}</div>
+        </div>
+      ))}
+      <div className="col-span-2 sm:col-span-4 flex items-center gap-2 text-[10.5px] text-slate-500 font-medium">
+        <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400/80 flex-shrink-0" aria-hidden />
+        Illustrative intelligence · demo dataset — connect your own data to see live values.
+      </div>
+    </div>
+  );
+}
+
+/* ─── Main page ─────────────────────────────────────────────────────────────── */
+
+const fadeUp = {
+  initial: { opacity: 0, y: 24 },
+  whileInView: { opacity: 1, y: 0 },
+  viewport: { once: true, margin: '-60px' },
+} as const;
+
+export default function HomePage() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const reduced = useReducedMotion();
+  const { isAuthenticated } = useApp();
+
+  const appPath = (path: string) => (isAuthenticated ? path : '/login');
+
+  // "Watch the workflow" → smooth-scroll to the workflow section
+  useEffect(() => {
+    if (location.hash === '#workflow') {
+      document.getElementById('workflow')?.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth' });
+    }
+  }, [location.hash, reduced]);
+
+  return (
+    <div className="bg-white min-h-screen">
+      {/* ═══════════ PUBLIC HEADER ═══════════ */}
+      <header className="sticky top-0 z-40 bg-slate-950/95 backdrop-blur border-b border-slate-800/80">
+        <div className="max-w-7xl mx-auto px-6 md:px-8 h-14 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shadow-md shadow-blue-950/50">
+              <Shield className="w-5 h-5 text-white" aria-hidden />
+            </div>
+            <div className="leading-tight">
+              <div className="font-bold text-white text-sm">SafeSense AI</div>
+              <div className="text-[10px] font-semibold text-blue-400 uppercase tracking-wider">Safety Intelligence</div>
             </div>
           </div>
-        </div>
-      </section>
-
-      {/* ─── Features ─────────────────────────────────────────────── */}
-      <section className="border-t border-slate-200 pt-12">
-        <div className="max-w-6xl mx-auto">
-          <h2 className="text-2xl font-bold text-slate-900 text-center mb-2">Platform Capabilities</h2>
-          <p className="text-slate-500 text-center text-sm mb-10">Everything an HSE team needs in one intelligent platform.</p>
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {FEATURES.map(({ icon: Icon, title, desc }) => (
-              <div key={title} className="card-hover">
-                <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center mb-3.5 text-blue-600">
-                  <Icon className="w-5 h-5" />
-                </div>
-                <h3 className="font-bold text-slate-900 mb-1.5 text-base">{title}</h3>
-                <p className="text-slate-600 text-sm leading-relaxed">{desc}</p>
-              </div>
-            ))}
+          <div className="flex items-center gap-2">
+            {isAuthenticated ? (
+              <button
+                onClick={() => navigate('/app/dashboard')}
+                className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+              >
+                Open Platform
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={() => navigate('/login')}
+                  className="text-sm font-semibold text-slate-300 hover:text-white px-3 py-2 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                >
+                  Sign in
+                </button>
+                <button
+                  onClick={() => navigate('/login?mode=signup')}
+                  className="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                >
+                  <LogIn className="w-4 h-4" aria-hidden />
+                  Create account
+                </button>
+              </>
+            )}
           </div>
         </div>
+      </header>
+
+      <div className="space-y-20 md:space-y-24">
+
+      {/* ═══════════ HERO ═══════════ */}
+      <section className="relative px-6 md:px-8 pt-10 pb-14 md:pt-20 md:pb-24 overflow-hidden
+                          bg-slate-950 text-white
+                          bg-[radial-gradient(ellipse_at_top_left,rgba(37,99,235,0.18),transparent_55%),radial-gradient(ellipse_at_bottom_right,rgba(16,185,129,0.10),transparent_50%)]">
+        {/* fine industrial grid */}
+        <svg aria-hidden className="absolute inset-0 w-full h-full opacity-[0.045] pointer-events-none">
+          <defs>
+            <pattern id="hero-grid" width="48" height="48" patternUnits="userSpaceOnUse">
+              <path d="M 48 0 L 0 0 0 48" fill="none" stroke="white" strokeWidth="1" />
+            </pattern>
+          </defs>
+          <rect width="100%" height="100%" fill="url(#hero-grid)" />
+        </svg>
+
+        <div className="relative max-w-7xl mx-auto grid lg:grid-cols-2 gap-10 lg:gap-14 items-center">
+          {/* Copy */}
+          <div>
+            <motion.div {...(reduced ? {} : fadeUp)} className="inline-flex items-center gap-2 bg-blue-500/10 border border-blue-400/30 text-blue-300 px-3.5 py-1.5 rounded-full text-[11px] font-bold uppercase tracking-[0.14em] mb-6">
+              <Shield className="w-3.5 h-3.5" aria-hidden />
+              Enterprise Safety Intelligence Platform
+            </motion.div>
+
+            <motion.h1
+              {...(reduced ? {} : { ...fadeUp, transition: { delay: 0.05, duration: 0.5 } })}
+              className="text-4xl sm:text-5xl xl:text-6xl font-extrabold leading-[1.05] tracking-tight mb-5"
+            >
+              Safety Intelligence
+              <span className="block text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-sky-300 to-emerald-300">
+                for the risks that matter most.
+              </span>
+            </motion.h1>
+
+            <motion.p
+              {...(reduced ? {} : { ...fadeUp, transition: { delay: 0.1, duration: 0.5 } })}
+              className="text-lg text-slate-300 max-w-xl mb-4 leading-relaxed"
+            >
+              Turn thousands of unstructured safety observations into explainable SIF intelligence,
+              recurring patterns, and preventive action.
+            </motion.p>
+
+            <motion.p
+              {...(reduced ? {} : { ...fadeUp, transition: { delay: 0.14, duration: 0.5 } })}
+              className="flex items-center gap-2 text-sm text-slate-400 font-medium mb-8"
+            >
+              <ShieldCheck className="w-4 h-4 text-emerald-400 flex-shrink-0" aria-hidden />
+              AI-assisted. Evidence-grounded. Human-authorized.
+            </motion.p>
+
+            <motion.div
+              {...(reduced ? {} : { ...fadeUp, transition: { delay: 0.18, duration: 0.5 } })}
+              className="flex flex-col sm:flex-row gap-3"
+            >
+              <button onClick={() => navigate(appPath('/analysis'))} className="inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold px-6 py-3 rounded-xl shadow-lg shadow-blue-950/50 transition-all duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950">
+                <Brain className="w-5 h-5" aria-hidden />
+                Analyze a Report
+              </button>
+              <button onClick={() => navigate(appPath('/command-center'))} className="inline-flex items-center justify-center gap-2 bg-white/5 hover:bg-white/10 border border-slate-600 text-slate-100 font-semibold px-6 py-3 rounded-xl transition-all duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950">
+                <BarChart2 className="w-5 h-5" aria-hidden />
+                Explore Intelligence
+              </button>
+              <a
+                href="#workflow"
+                onClick={e => { e.preventDefault(); document.getElementById('workflow')?.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth' }); }}
+                className="inline-flex items-center justify-center gap-2 text-slate-300 hover:text-white font-semibold px-4 py-3 rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 rounded-xl"
+              >
+                <Play className="w-4 h-4" aria-hidden />
+                Watch the Workflow
+              </a>
+            </motion.div>
+
+            {/* indicators */}
+            <motion.div {...(reduced ? {} : { ...fadeUp, transition: { delay: 0.24, duration: 0.5 } })} className="mt-10">
+              <IndicatorTiles />
+            </motion.div>
+          </div>
+
+          {/* Animated pipeline console */}
+          <motion.div
+            initial={reduced ? false : { opacity: 0, y: 32, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ delay: 0.15, duration: 0.6 }}
+          >
+            <PipelineConsole />
+          </motion.div>
+        </div>
       </section>
 
-      {/* ─── CTA ──────────────────────────────────────────────────── */}
-      <section className="border-t border-slate-200 pt-12">
-        <div className="max-w-3xl mx-auto text-center">
-          <div className="card border-blue-200 bg-blue-50/50 p-8 md:p-10">
-            <Zap className="w-10 h-10 text-blue-600 mx-auto mb-4" />
-            <h2 className="text-2xl font-bold text-slate-900 mb-2">Get Started</h2>
-            <p className="text-slate-600 mb-6 text-sm leading-relaxed max-w-xl mx-auto">
-              Upload your CSV of safety reports and see the full platform in action — AI analysis, risk scoring, pattern discovery, early warnings, and corrective actions. All data is processed and stored in the backend database.
+      {/* ═══════════ WORKFLOW ═══════════ */}
+      <section id="workflow" className="max-w-7xl mx-auto scroll-mt-20">
+        <motion.div {...(reduced ? {} : fadeUp)} className="text-center mb-12">
+          <p className="text-xs font-bold tracking-[0.18em] text-blue-600 uppercase mb-2">How it works</p>
+          <h2 className="text-3xl md:text-4xl font-extrabold text-slate-900 tracking-tight mb-3">From raw reports to preventive action</h2>
+          <p className="text-slate-500 max-w-2xl mx-auto">Six deterministic stages turn unstructured text into a connected safety intelligence system.</p>
+        </motion.div>
+
+        <ol className="relative grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {WORKFLOW_STAGES.map((stage, i) => {
+            const Icon = stage.icon;
+            return (
+              <motion.li
+                key={stage.n}
+                initial={reduced ? false : { opacity: 0, y: 24 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true, margin: '-40px' }}
+                transition={{ delay: reduced ? 0 : i * 0.06, duration: 0.45 }}
+                className="group relative card-hover p-6 cursor-default"
+                tabIndex={0}
+                aria-label={`Stage ${stage.n}: ${stage.title}`}
+              >
+                <div className="flex items-start justify-between mb-4">
+                  <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-blue-600 to-blue-500 text-white flex items-center justify-center shadow-md shadow-blue-600/20 group-hover:scale-105 transition-transform duration-200">
+                    <Icon className="w-5 h-5" aria-hidden />
+                  </div>
+                  <span className="text-4xl font-extrabold text-slate-100 select-none group-hover:text-blue-100 transition-colors" aria-hidden>{stage.n}</span>
+                </div>
+                <div className="text-[11px] font-bold tracking-[0.16em] text-blue-600 uppercase mb-1">{stage.key}</div>
+                <h3 className="text-lg font-bold text-slate-900 mb-2">{stage.title}</h3>
+                <p className="text-sm text-slate-600 leading-relaxed">{stage.desc}</p>
+                <div className="mt-4 h-0.5 w-10 bg-blue-600/80 rounded-full group-hover:w-16 transition-all duration-300" aria-hidden />
+              </motion.li>
+            );
+          })}
+        </ol>
+      </section>
+
+      {/* ═══════════ WHY SAFESENSE ═══════════ */}
+      <section className="max-w-7xl mx-auto">
+        <motion.div {...(reduced ? {} : fadeUp)} className="text-center mb-12">
+          <p className="text-xs font-bold tracking-[0.18em] text-blue-600 uppercase mb-2">Why SafeSense</p>
+          <h2 className="text-3xl md:text-4xl font-extrabold text-slate-900 tracking-tight">See the signal. Act before it becomes an incident.</h2>
+        </motion.div>
+
+        <div className="grid md:grid-cols-3 gap-5">
+          {WHY_STEPS.map((step, i) => {
+            const Icon = step.icon;
+            const toneRing = step.tone === 'amber' ? 'border-amber-200 bg-amber-50 text-amber-700'
+              : step.tone === 'blue' ? 'border-blue-200 bg-blue-50 text-blue-700'
+              : 'border-slate-200 bg-slate-100 text-slate-700';
+            return (
+              <motion.div
+                key={step.label}
+                initial={reduced ? false : { opacity: 0, y: 24 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true, margin: '-40px' }}
+                transition={{ delay: reduced ? 0 : i * 0.08, duration: 0.45 }}
+                className="relative card p-7"
+              >
+                <div className={`inline-flex items-center gap-1.5 border rounded-full px-2.5 py-1 text-[10.5px] font-bold tracking-widest uppercase mb-5 ${toneRing}`}>
+                  <Icon className="w-3.5 h-3.5" aria-hidden />
+                  {step.label}
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 mb-2.5 leading-snug">{step.title}</h3>
+                <p className="text-slate-600 text-sm leading-relaxed">{step.desc}</p>
+                {i < WHY_STEPS.length - 1 && (
+                  <ArrowRight className="hidden md:block absolute top-1/2 -right-[22px] w-6 h-6 text-slate-300 z-10" aria-hidden />
+                )}
+              </motion.div>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* ═══════════ SIF SECTION ═══════════ */}
+      <section className="max-w-7xl mx-auto">
+        <div className="rounded-3xl border border-red-100 bg-gradient-to-br from-red-50/80 via-white to-white p-8 md:p-12 shadow-sm">
+          <motion.div {...(reduced ? {} : fadeUp)} className="max-w-3xl mb-10">
+            <div className="flex items-center gap-3 mb-3">
+              <AlertTriangle className="w-6 h-6 text-red-600" aria-hidden />
+              <h2 className="text-3xl md:text-4xl font-extrabold text-slate-900 tracking-tight">SIF intelligence, explained honestly</h2>
+            </div>
+            <p className="text-slate-600 leading-relaxed">
+              A <strong>Serious Injury or Fatality (SIF) precursor</strong> is a warning sign that a high-energy
+              exposure was one failed barrier away from tragedy. SafeSense surfaces these precursors early
+              so controls can be restored before exposure occurs.
             </p>
-            <div className="flex flex-col sm:flex-row gap-3.5 justify-center">
-              <button onClick={() => navigate('/upload')} className="btn-primary text-base px-8 py-3">
-                <Upload className="w-5 h-5" />
-                Upload Reports
+          </motion.div>
+
+          {/* chain */}
+          <ol className="grid gap-3 lg:grid-cols-4 lg:gap-0 lg:items-stretch mb-8">
+            {SIF_CHAIN.map((node, i) => {
+              const Icon = node.icon;
+              return (
+                <motion.li
+                  key={node.label}
+                  initial={reduced ? false : { opacity: 0, y: 20 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true, margin: '-40px' }}
+                  transition={{ delay: reduced ? 0 : i * 0.1, duration: 0.4 }}
+                  className="relative"
+                >
+                  <div className="h-full bg-white border border-red-100 rounded-2xl p-5 lg:rounded-none lg:first:rounded-l-2xl lg:last:rounded-r-2xl shadow-xs">
+                    <div className="flex items-center gap-2 mb-2.5">
+                      <div className="w-8 h-8 rounded-lg bg-red-100 text-red-600 flex items-center justify-center flex-shrink-0">
+                        <Icon className="w-4 h-4" aria-hidden />
+                      </div>
+                      <span className="text-[11px] font-extrabold tracking-wider text-red-700 uppercase">{node.label}</span>
+                    </div>
+                    <p className="text-[13px] text-slate-600 leading-relaxed">{node.detail}</p>
+                  </div>
+                  {i < SIF_CHAIN.length - 1 && (
+                    <ArrowDown className="hidden lg:block absolute top-1/2 -right-[13px] -translate-y-1/2 w-6 h-6 text-red-300 z-10 bg-white rounded-full" aria-hidden />
+                  )}
+                </motion.li>
+              );
+            })}
+          </ol>
+
+          <motion.div {...(reduced ? {} : fadeUp)} className="flex items-start gap-3 bg-slate-900 text-slate-200 rounded-2xl p-5">
+            <ShieldCheck className="w-5 h-5 text-emerald-400 flex-shrink-0 mt-0.5" aria-hidden />
+            <p className="text-sm leading-relaxed">
+              <strong className="text-white">Safety boundary:</strong> SafeSense identifies elevated-risk precursors.
+              It does not predict that a fatality will occur. Final safety decisions remain with authorized HSE personnel.
+            </p>
+          </motion.div>
+        </div>
+      </section>
+
+      {/* ═══════════ CAPABILITIES ═══════════ */}
+      <section className="max-w-7xl mx-auto">
+        <motion.div {...(reduced ? {} : fadeUp)} className="text-center mb-12">
+          <p className="text-xs font-bold tracking-[0.18em] text-blue-600 uppercase mb-2">Capabilities</p>
+          <h2 className="text-3xl md:text-4xl font-extrabold text-slate-900 tracking-tight mb-3">One platform. The full prevention loop.</h2>
+          <p className="text-slate-500 max-w-2xl mx-auto">Deterministic safety engines first, advisory AI second, humans always in command.</p>
+        </motion.div>
+
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+          {CAPABILITIES.map((cap, i) => {
+            const Icon = cap.icon;
+            return (
+              <motion.div
+                key={cap.title}
+                initial={reduced ? false : { opacity: 0, y: 20 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true, margin: '-40px' }}
+                transition={{ delay: reduced ? 0 : (i % 3) * 0.06, duration: 0.4 }}
+                className="group card-hover p-6"
+              >
+                <div className="w-10 h-10 rounded-xl bg-slate-900 text-white flex items-center justify-center mb-4 group-hover:bg-blue-600 transition-colors duration-200">
+                  <Icon className="w-5 h-5" aria-hidden />
+                </div>
+                <h3 className="font-bold text-slate-900 mb-1.5">{cap.title}</h3>
+                <p className="text-sm text-slate-600 leading-relaxed">{cap.desc}</p>
+              </motion.div>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* ═══════════ FINAL CTA ═══════════ */}
+      <section className="max-w-7xl mx-auto">
+        <motion.div
+          {...(reduced ? {} : fadeUp)}
+          className="relative overflow-hidden rounded-3xl bg-slate-950 text-white px-8 py-14 md:px-16 md:py-16 text-center
+                     bg-[radial-gradient(ellipse_at_top,rgba(37,99,235,0.25),transparent_60%)]"
+        >
+          <svg aria-hidden className="absolute inset-0 w-full h-full opacity-[0.05] pointer-events-none">
+            <rect width="100%" height="100%" fill="url(#hero-grid)" />
+          </svg>
+          <div className="relative">
+            <Zap className="w-9 h-9 text-blue-400 mx-auto mb-5" aria-hidden />
+            <h2 className="text-3xl md:text-5xl font-extrabold tracking-tight mb-4">
+              Turn observations into prevention.
+            </h2>
+            <p className="text-slate-300 max-w-xl mx-auto mb-9 leading-relaxed">
+              Upload a dataset or analyze a single report — and watch SafeSense turn free text into
+              explainable, actionable safety intelligence.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-3 justify-center">
+              <button onClick={() => navigate(appPath('/upload'))} className="inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 font-semibold px-7 py-3.5 rounded-xl shadow-lg shadow-blue-950/60 transition-all active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950">
+                <Upload className="w-5 h-5" aria-hidden />
+                Analyze a Report
               </button>
-              <button onClick={() => navigate('/analysis')} className="btn-secondary text-base px-8 py-3 bg-white hover:bg-slate-50 border-slate-300">
-                <Play className="w-5 h-5" />
-                Try Single Analysis
+              <button onClick={() => navigate(appPath('/copilot'))} className="inline-flex items-center justify-center gap-2 bg-white/5 hover:bg-white/10 border border-slate-600 font-semibold px-7 py-3.5 rounded-xl transition-all active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950">
+                <MessageSquare className="w-5 h-5" aria-hidden />
+                Open Safety Copilot
+              </button>
+              <button onClick={() => navigate(appPath('/dashboard'))} className="inline-flex items-center justify-center gap-2 bg-white/5 hover:bg-white/10 border border-slate-600 font-semibold px-7 py-3.5 rounded-xl transition-all active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950">
+                <BarChart2 className="w-5 h-5" aria-hidden />
+                Explore Dashboard
               </button>
             </div>
+            <p className="mt-8 text-xs text-slate-500 font-medium flex items-center justify-center gap-2">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" aria-hidden />
+              Final safety decisions remain with authorized HSE personnel.
+            </p>
           </div>
-        </div>
+        </motion.div>
       </section>
 
       {/* Footer */}
-      <footer className="border-t border-slate-200 pt-8 pb-4 text-center">
-        <div className="flex items-center justify-center gap-2 mb-2">
-          <Shield className="w-4 h-4 text-blue-600" />
-          <span className="font-bold text-slate-900">SafeSense AI</span>
+      <footer className="border-t border-slate-200 pt-8 pb-4">
+        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Shield className="w-4 h-4 text-blue-600" aria-hidden />
+            <span className="font-bold text-slate-900 text-sm">SafeSense AI</span>
+            <span className="text-slate-400 text-xs">· Enterprise Safety Intelligence Platform</span>
+          </div>
+          <p className="text-slate-500 text-xs text-center sm:text-right">
+            AI supports HSE decision-making · Deterministic engines are authoritative · Humans authorize every action
+          </p>
         </div>
-        <p className="text-slate-500 text-xs">Enterprise Safety Intelligence Platform · AI supports HSE decision-making. Final decisions remain with authorized safety personnel.</p>
       </footer>
-
+      </div>
     </div>
   );
 }

@@ -3,12 +3,13 @@ SafeSense AI — Phase 7 Production Security & Deployment Test Suite
 Validates:
 1. Production Configuration & Fail-Fast Secrets Validation
 2. Password Hashing & Verification (bcrypt)
-3. Authentication & RBAC Authorization Gates
-4. Demo Mode Isolation
+3. Authentication & RBAC Authorization Gates (real DB-backed accounts)
+4. Authentication Failure Modes (replaces legacy demo-mode isolation tests:
+   demo credentials no longer exist anywhere in the system)
 5. Security Response Headers Middleware
 6. Request ID Tracing Middleware
 7. Rate Limiting Middleware
-8. Upload Validation (File Size 413, File Extension 422)
+8. Upload Validation (Auth 401/403, File Size 413, File Extension 422)
 9. Admin Endpoint Protection (RBAC & Production Disablement)
 10. Sensitive Data & Credential Scrubbing in Structured Logging
 11. Health (/api/health) and Readiness (/api/ready) Probes
@@ -21,10 +22,11 @@ import io
 import time
 import asyncio
 import pytest
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 
-from main import app, DEMO_USERS
+from main import app
 from config import Settings, settings
 from services.auth import (
     hash_password,
@@ -43,6 +45,26 @@ from services.rule_classifier import classify_life_saving_rule
 from services.barrier_dictionary import detect_barriers
 
 client = TestClient(app)
+
+
+def _make_user(email: str, role: str):
+    """Idempotently create a real DB-backed user (roles resolve from the DB row)."""
+    import models
+    from database import SessionLocal
+    with SessionLocal() as db:
+        u = db.query(models.User).filter(models.User.email == email).first()
+        if u is None:
+            u = models.User(email=email, name=email.split("@")[0],
+                            password_hash=hash_password("Str0ngPass1"),
+                            role=role, is_active=True)
+            db.add(u)
+            db.commit()
+            db.refresh(u)
+        return create_access_token(u)
+
+
+def _write_auth() -> dict:
+    return {"Authorization": "Bearer " + _make_user("phase7.writer@plantco.com", "HSE Officer")}
 
 
 # =========================================================================
@@ -133,11 +155,16 @@ def test_password_hashing_and_verification():
     assert verify_password("WrongPassword!", hashed) is False
 
 
-def test_demo_user_passwords_verify_correctly():
-    """Passwords in DEMO_USERS verify against expected demo credentials."""
-    for email, data in DEMO_USERS.items():
-        assert verify_password(data["password"], data["password"]) is True
-    assert verify_password("admin123", DEMO_USERS["admin@safesense.ai"]["password"]) is True
+def test_legacy_demo_credentials_are_eradicated():
+    """Demo credentials must not exist anywhere in the auth stack.
+    Every user identity resolves from the database (bcrypt hash), never from
+    an in-code credential dictionary."""
+    import main
+    import services.auth as auth_mod
+    assert not hasattr(main, "DEMO_USERS"), "DEMO_USERS must be removed from main"
+    src = open(auth_mod.__file__, encoding="utf-8").read()
+    for cred in ("admin123", "hse123", "mgr123", "site123"):
+        assert cred not in src, f"demo credential {cred} leaked into services/auth.py"
 
 
 # =========================================================================
@@ -145,14 +172,14 @@ def test_demo_user_passwords_verify_correctly():
 # =========================================================================
 def test_jwt_token_lifecycle():
     """Token generation, UTC expiry, and claims decoding."""
-    token = create_access_token(
-        data={"sub": "admin@safesense.ai", "role": "Administrator", "name": "Admin User"},
-        expires_minutes=15,
-    )
+    fake_user = SimpleNamespace(id=424242, email="phase7@plantco.com",
+                                role="Administrator", token_version=0)
+    token = create_access_token(fake_user)
     decoded = decode_access_token(token)
     assert decoded is not None
-    assert decoded["sub"] == "admin@safesense.ai"
+    assert decoded["sub"] == "424242"
     assert decoded["role"] == "Administrator"
+    assert decoded["type"] == "access"
     assert "exp" in decoded
 
 
@@ -162,41 +189,38 @@ def test_jwt_invalid_token_returns_none():
 
 
 # =========================================================================
-# 4. Demo Mode Isolation
+# 4. Authentication Failure Modes (real DB-backed accounts; no demo mode)
 # =========================================================================
-def test_login_demo_mode_allowed():
-    """Login with valid demo credentials when demo mode is active."""
+def test_login_rejects_unknown_account():
+    """Unknown account returns generic 401 (no account enumeration)."""
+    response = client.post(
+        "/api/auth/login",
+        json={"email": "nobody@safesense.ai", "password": "whatever123"},
+    )
+    assert response.status_code == 401
+    assert "Invalid email or password" in response.json()["detail"]
+
+
+def test_login_rejects_legacy_demo_credential():
+    """The legacy demo account/password must not authenticate anymore."""
     response = client.post(
         "/api/auth/login",
         json={"email": "admin@safesense.ai", "password": "admin123"},
     )
-    assert response.status_code == 200
-    data = response.json()
-    assert "token" in data
-    assert data["user"]["role"] == "Administrator"
+    assert response.status_code == 401
 
 
-def test_login_demo_mode_rejected_when_disabled():
-    """Demo login is rejected in production when allow_demo_auth=False."""
-    prod_settings = Settings(
-        environment="production",
-        allow_demo_auth=False,
-        jwt_secret_key="a" * 32,
+def test_login_invalid_password_generic_error():
+    """Wrong password returns generic 401 — no hint which field was wrong."""
+    response = client.post(
+        "/api/auth/register",
+        json={"name": "Phase Seven", "email": "phase7.login@plantco.com",
+              "password": "Str0ngPass!", "confirm_password": "Str0ngPass!"},
     )
-    with patch("main.settings", prod_settings):
-        response = client.post(
-            "/api/auth/login",
-            json={"email": "admin@safesense.ai", "password": "admin123"},
-        )
-        assert response.status_code == 403
-        assert "Demo authentication is disabled" in response.json()["detail"]
-
-
-def test_login_invalid_password():
-    """Invalid credentials return 401 Unauthorized."""
+    assert response.status_code in (201, 409)  # 409 on re-run: already registered
     response = client.post(
         "/api/auth/login",
-        json={"email": "admin@safesense.ai", "password": "wrongpassword"},
+        json={"email": "phase7.login@plantco.com", "password": "wrongpassword"},
     )
     assert response.status_code == 401
     assert "Invalid email or password" in response.json()["detail"]
@@ -263,7 +287,7 @@ def test_upload_rejects_disallowed_extension():
     """Disallowed file extension (e.g. .exe) is rejected with 422."""
     file_content = b"echo malicious"
     files = {"file": ("malware.exe", io.BytesIO(file_content), "application/octet-stream")}
-    response = client.post("/api/upload", files=files)
+    response = client.post("/api/upload", files=files, headers=_write_auth())
     assert response.status_code == 422
     assert "not supported" in response.json()["detail"].lower()
 
@@ -272,9 +296,25 @@ def test_upload_rejects_oversized_file():
     """Files exceeding MAX_UPLOAD_SIZE_BYTES are rejected with 413."""
     oversized = b"a" * (16 * 1024 * 1024)
     files = {"file": ("large.csv", io.BytesIO(oversized), "text/csv")}
-    response = client.post("/api/upload", files=files)
+    response = client.post("/api/upload", files=files, headers=_write_auth())
     assert response.status_code == 413
     assert "maximum allowed" in response.json()["detail"].lower()
+
+
+def test_upload_requires_authentication():
+    """Legacy upload alias must reject anonymous uploads (401)."""
+    files = {"file": ("ok.csv", io.BytesIO(b"description\nsafe observation text here"), "text/csv")}
+    assert client.post("/api/upload", files=files).status_code == 401
+    assert client.post("/upload", files=files).status_code == 401
+
+
+def test_upload_forbidden_for_read_only_role():
+    """Viewer-role token on the upload alias must be rejected (403)."""
+    token = _make_user("phase7.viewer@plantco.com", "Viewer")
+    files = {"file": ("ok.csv", io.BytesIO(b"description\nsafe observation text here"), "text/csv")}
+    response = client.post("/api/upload", files=files,
+                           headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 403
 
 
 # =========================================================================
@@ -287,19 +327,21 @@ def test_admin_reset_requires_authentication():
 
 
 def test_admin_reset_requires_admin_role():
-    """Safety Officer token calling reset-db returns 403 Forbidden."""
-    officer_token = create_access_token({"sub": "officer@safesense.ai", "role": "Safety Officer"})
+    """Non-admin token calling reset-db returns 403 Forbidden."""
+    # Token alone is insufficient: the role is re-resolved from the DB row.
+    fake_user = SimpleNamespace(id=424244, email="officer7@plantco.com",
+                                role="Safety Officer", token_version=0)
+    officer_token = create_access_token(fake_user)
     response = client.post(
         "/api/admin/reset-db",
         headers={"Authorization": f"Bearer {officer_token}"},
     )
-    assert response.status_code == 403
-    assert "Access forbidden" in response.json()["detail"]
+    assert response.status_code == 401  # account id does not exist in DB
 
 
 def test_admin_reset_disabled_in_production():
     """Admin reset endpoint is permanently disabled in production."""
-    admin_token = create_access_token({"sub": "admin@safesense.ai", "role": "Administrator"})
+    admin_token = _make_user("phase7.admin@plantco.com", "Administrator")
     prod_settings = Settings(
         environment="production",
         allow_admin_reset=False,

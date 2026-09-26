@@ -1,7 +1,7 @@
 /**
  * ReportsPage.tsx
  *
- * Data source: GET /api/reports  (live from SQLite DB)
+ * Data source: GET /api/reports  (live from the safety database)
  * No context reads for report data. No mock data.
  * Clean modern light theme.
  */
@@ -185,7 +185,7 @@ export default function ReportsPage() {
           <p className="text-slate-500 text-sm mb-6 max-w-sm">
             No reports found in the database. Upload a CSV file to populate safety reports.
           </p>
-          <button onClick={() => navigate('/upload')} className="btn-primary">
+          <button onClick={() => navigate('/app/upload')} className="btn-primary">
             <Upload className="w-4 h-4" />
             Upload Reports
           </button>

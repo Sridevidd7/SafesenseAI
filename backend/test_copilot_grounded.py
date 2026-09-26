@@ -342,7 +342,21 @@ class TestPatternAdapter(unittest.TestCase):
 
 
 class TestApiEndpointRegression(unittest.TestCase):
-    """Regression: /api/copilot/chat keeps its original contract and adds grounding."""
+    """Regression: /api/copilot/chat keeps its original contract and adds grounding.
+
+    Auth is covered separately in test_auth_streaming.py — the auth dependency
+    is overridden per-class and removed again in tearDownClass so the override
+    never leaks into other test modules."""
+
+    @classmethod
+    def setUpClass(cls):
+        from services.auth import require_authenticated
+        app.dependency_overrides[require_authenticated] = lambda: None
+
+    @classmethod
+    def tearDownClass(cls):
+        from services.auth import require_authenticated
+        app.dependency_overrides.pop(require_authenticated, None)
 
     def test_endpoint_503_without_api_key(self):
         import asyncio

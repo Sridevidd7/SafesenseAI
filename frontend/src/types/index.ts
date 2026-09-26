@@ -291,8 +291,9 @@ export interface User {
   id: string;
   name: string;
   email: string;
-  role: 'HSE Officer' | 'Safety Manager' | 'Site Manager' | 'Administrator';
+  role: 'HSE Officer' | 'Safety Manager' | 'Site Manager' | 'Administrator' | 'Viewer' | string;
   site?: string;
+  organization?: string;
   token?: string;
 }
 

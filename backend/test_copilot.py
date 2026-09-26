@@ -30,8 +30,33 @@ from services import copilot_retrieval
 from services.copilot_retrieval import retrieve_relevant_reports
 from main import app
 
+# Auth is covered separately in test_auth_streaming.py; the copilot tests
+# exercise grounding, sanitization and LLM synthesis behavior. The auth
+# dependency is overridden here and REMOVED in tearDownClass so the override
+# cannot leak into other test modules in the same pytest session.
+def _bypass_auth():
+    return None
+
+
+def _install_auth_bypass():
+    from services.auth import require_authenticated
+    app.dependency_overrides[require_authenticated] = _bypass_auth
+
+
+def _remove_auth_bypass():
+    from services.auth import require_authenticated
+    app.dependency_overrides.pop(require_authenticated, None)
+
 
 class TestSafetyCopilot(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        _install_auth_bypass()
+
+    @classmethod
+    def tearDownClass(cls):
+        _remove_auth_bypass()
 
     def setUp(self):
         self.db = SessionLocal()

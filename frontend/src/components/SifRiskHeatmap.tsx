@@ -1,7 +1,7 @@
 /**
  * SifRiskHeatmap.tsx — Operational SIF Risk Concentration Explorer
  *
- * Sourced directly from GET /api/analytics/sif-heatmap (real SQLite data).
+ * Sourced directly from GET /api/analytics/sif-heatmap (live verified safety database).
  * 6-Tier Hierarchy: Site → Unit → Area → Activity → LSR/Precursor → Failed Barrier → Reports.
  * Severity Precedence: 🔴 HIGH → 🟡 EMERGING → 🟠 MEDIUM → 🟢 LOW (mutually exclusive).
  * Fallback values ("Not Specified") are clearly flagged and distinguished.
@@ -473,7 +473,7 @@ export default function SifRiskHeatmap() {
               </h3>
             </div>
             <span className="text-xs text-slate-400">
-              Live SQLite dataset records
+              Live verified dataset records
             </span>
           </div>
 

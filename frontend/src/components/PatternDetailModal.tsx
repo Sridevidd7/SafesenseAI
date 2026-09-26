@@ -197,7 +197,7 @@ export default function PatternDetailModal({ pattern, onClose }: PatternDetailMo
         {/* Footer */}
         <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between text-xs">
           <span className="text-slate-500 font-medium">
-            Pattern ID: {pattern.cluster_id || 'N/A'} · Source: SQLite
+            Pattern ID: {pattern.cluster_id || 'N/A'} · Source: Verified SafeSense Database
           </span>
           <button onClick={onClose} className="btn-secondary text-xs py-1.5 px-3">
             Close Inspection
