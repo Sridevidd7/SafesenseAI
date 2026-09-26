@@ -16,12 +16,14 @@ import logging
 from database import get_db
 from models import Action, Report
 from schemas import ActionCreate, ActionUpdate, ActionResponse
+from services.auth import require_authenticated, require_write
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/actions",
     tags=["Actions"],
+    dependencies=[Depends(require_authenticated)],
 )
 
 VALID_STATUSES = {"OPEN", "IN_PROGRESS", "COMPLETED", "OVERDUE"}
@@ -43,6 +45,7 @@ def _normalize_status(status_str: str) -> str:
 def create_action(
     payload: ActionCreate,
     db: Session = Depends(get_db),
+    user=Depends(require_write),
 ) -> ActionResponse:
     # ── 1. Validate report_id if specified ───────────────────────────────────
     if payload.report_id is not None:
@@ -128,6 +131,7 @@ def update_action(
     id: int,
     payload: ActionUpdate,
     db: Session = Depends(get_db),
+    user=Depends(require_write),
 ) -> ActionResponse:
     action = db.query(Action).filter(Action.id == id).first()
     if not action:

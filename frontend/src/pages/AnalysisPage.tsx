@@ -197,7 +197,7 @@ export default function AnalysisPage() {
             AI Safety Report Analysis
           </h1>
           <p className="section-sub">
-            Inspect, classify, and analyze individual safety records stored in the SQLite database or test new observations.
+            Inspect, classify, and analyze individual safety records from the verified safety database, or test new observations.
           </p>
         </div>
 
@@ -262,7 +262,7 @@ export default function AnalysisPage() {
                     onClick={() => loadReports()}
                     disabled={isLoadingList}
                     className="btn-secondary text-xs py-1.5 px-2.5 flex-shrink-0"
-                    title="Refresh records from SQLite database"
+                    title="Refresh records from the safety database"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${isLoadingList ? 'animate-spin text-blue-600' : ''}`} />
                     Refresh
@@ -558,7 +558,7 @@ export default function AnalysisPage() {
                       {analyzedSource === 'database' ? `Report #${selectedReport?.id}` : 'Observation Analysis'}
                     </span>
                     <span className="text-[10px] bg-slate-100 text-slate-600 font-semibold px-2 py-0.5 rounded-full border border-slate-200">
-                      {analyzedSource === 'database' ? 'Source: SQLite DB' : 'Source: Manual Sandbox'}
+                      {analyzedSource === 'database' ? 'Source: Verified Database' : 'Source: Manual Sandbox'}
                     </span>
                   </div>
 

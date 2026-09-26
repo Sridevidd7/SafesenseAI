@@ -3,7 +3,7 @@ models.py — SQLAlchemy ORM models (table definitions).
 Each class maps directly to a database table.
 """
 from datetime import datetime, timezone
-from sqlalchemy import Column, Index, Integer, String, Text, DateTime, ForeignKey
+from sqlalchemy import Column, Index, Integer, String, Text, DateTime, ForeignKey, Boolean
 from sqlalchemy.orm import relationship, backref
 from database import Base
 
@@ -37,6 +37,44 @@ def _embedding_column_type():
 # Canonical embedding dimension for the infrastructure (model-agnostic; the
 # actual model is intentionally NOT part of this batch).
 EMBEDDING_DIMENSION = 768
+
+
+class User(Base):
+    """
+    Application user account (Phase 8 — production authentication).
+
+    Passwords are stored ONLY as bcrypt hashes (services/auth.py). Role is
+    resolved server-side on every request; the browser is never trusted for
+    identity or authorization.
+    """
+    __tablename__ = "users"
+
+    id            = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    email         = Column(String(255), unique=True, index=True, nullable=False)
+    name          = Column(String(200), nullable=False)
+    password_hash = Column(String(255), nullable=False)
+    role          = Column(String(50), nullable=False, default="Viewer")
+    organization  = Column(String(200), nullable=True)
+    site          = Column(String(100), nullable=True)
+    is_active     = Column(Boolean, nullable=False, default=True)
+    token_version = Column(Integer, nullable=False, default=0)
+    created_at    = Column(
+        DateTime,
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at    = Column(
+        DateTime,
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+    # SHA-256 of an opaque reset token + expiry; NULL when no reset is pending.
+    reset_token_hash = Column(String(64), nullable=True)
+    reset_token_expires_at = Column(DateTime, nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<User id={self.id} email={self.email!r} role={self.role!r} active={self.is_active}>"
 
 
 class Report(Base):

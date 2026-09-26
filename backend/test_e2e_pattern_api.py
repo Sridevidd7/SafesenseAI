@@ -13,6 +13,18 @@ from models import Report
 import json
 
 async def run_tests():
+    # These tests exercise business logic & response contracts, not auth
+    # (covered separately in test_auth_streaming.py). Bypass authentication by
+    # overriding only the auth dependency — the DB dependency stays REAL.
+    from services.auth import require_authenticated
+    app.dependency_overrides[require_authenticated] = lambda: None
+    try:
+        await _run_assertions()
+    finally:
+        app.dependency_overrides.pop(require_authenticated, None)
+
+
+async def _run_assertions():
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         print("=== Testing /api/analytics/patterns endpoint ===")

@@ -1,7 +1,10 @@
 """
 SafeSense AI — FastAPI Backend
 ================================
-Production-hardened backend supporting SQLite (local/demo) and PostgreSQL (production-target).
+Production-hardened industrial safety intelligence platform: deterministic
+safety engines are authoritative; ML/LLM layers are advisory. Persistence via
+DATABASE_URL (SQLite local/demo default; PostgreSQL/Supabase in production),
+with real DB-backed user accounts and RBAC.
 """
 from __future__ import annotations
 
@@ -43,8 +46,8 @@ if IS_SQLITE:
     Base.metadata.create_all(bind=engine)
 
 # ─── Service imports ──────────────────────────────────────────────────────────
-from services.auth import create_access_token, verify_password, verify_token
 from services.multilingual import LANG_DISPLAY, process_dataset, process_report
+from services.auth import require_authenticated, require_write
 from services.report_generator import generate_summary_report
 from services.risk_engine import (
     analyze_report,
@@ -59,6 +62,7 @@ from schemas import UploadResponse
 from routes.actions import router as actions_router
 from routes.admin import router as admin_router
 from routes.copilot import router as copilot_router
+from routes.auth import router as auth_router
 from routes.dashboard import router as dashboard_router
 from routes.reports import router as reports_router
 from routes.reviews import router as reviews_router
@@ -76,9 +80,10 @@ app = FastAPI(
     title="SafeSense AI API",
     description=(
         "AI-powered industrial safety intelligence platform API "
-        "with hybrid deterministic safety logic and PostgreSQL/pgvector advisory architecture."
+        "with hybrid deterministic safety logic, grounded Safety Copilot, "
+        "production authentication, multilingual support (EN/KN/HI), and PostgreSQL/pgvector advisory architecture."
     ),
-    version="1.2.0",
+    version="1.3.0",
     docs_url=None if settings.is_production and os.getenv("DISABLE_SWAGGER_IN_PROD", "false").lower() == "true" else "/api/docs",
     redoc_url=None if settings.is_production and os.getenv("DISABLE_SWAGGER_IN_PROD", "false").lower() == "true" else "/api/redoc",
 )
@@ -129,6 +134,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 security = HTTPBearer(auto_error=False)
 
 # ─── Mount database-backed routers ───────────────────────────────────────────
+app.include_router(auth_router,      prefix="/api")
 app.include_router(reports_router,   prefix="/api")
 app.include_router(dashboard_router, prefix="/api")
 app.include_router(actions_router,   prefix="/api")
@@ -138,6 +144,7 @@ app.include_router(copilot_router,   prefix="/api")
 app.include_router(semantic_router,  prefix="/api")
 
 # Mount direct endpoints (without /api prefix) for direct client requests
+app.include_router(auth_router)
 app.include_router(reports_router)
 app.include_router(dashboard_router)
 app.include_router(actions_router)
@@ -145,55 +152,10 @@ app.include_router(reviews_router)
 app.include_router(admin_router)
 app.include_router(copilot_router)
 
-# ─── Auth ─────────────────────────────────────────────────────────────────────
-# Local demo users dictionary (used when allow_demo_auth=True)
-DEMO_USERS = {
-    "admin@safesense.ai":   {"password": "admin123",  "role": "Administrator",   "name": "Sam Rivera"},
-    "hse@safesense.ai":     {"password": "hse123",    "role": "HSE Officer",     "name": "Alex Morgan"},
-    "manager@safesense.ai": {"password": "mgr123",    "role": "Safety Manager",  "name": "Jordan Lee"},
-    "site@safesense.ai":    {"password": "site123",   "role": "Site Manager",    "name": "Chris Patel"},
-}
-
-
-class LoginRequest(BaseModel):
-    email: str
-    password: str
-
-
-@app.post("/api/auth/login", tags=["Auth"])
-async def login(req: LoginRequest):
-    if settings.is_production and not settings.allow_demo_auth:
-        logger.warning(f"[AUTH_REJECTED] Demo authentication disabled in production for {req.email}")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Demo authentication is disabled in production environments. Please configure production identity provider.",
-        )
-
-    user = DEMO_USERS.get(req.email.lower().strip())
-    if not user or not verify_password(req.password, user["password"]):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password",
-        )
-
-    token = create_access_token({
-        "email": req.email,
-        "role": user["role"],
-        "name": user["name"],
-    })
-    return {
-        "token": token,
-        "user": {
-            "email": req.email,
-            "name": user["name"],
-            "role": user["role"],
-        },
-    }
-
-
 # ─── Direct Upload Endpoint (with Size & Extension Hardening) ─────────────────
-@app.post("/api/upload", response_model=UploadResponse, tags=["Upload"])
-@app.post("/upload", response_model=UploadResponse, tags=["Upload"])
+# Same write authorization as the /api/reports/upload ingestion endpoint.
+@app.post("/api/upload", response_model=UploadResponse, tags=["Upload"], dependencies=[Depends(require_write)])
+@app.post("/upload", response_model=UploadResponse, tags=["Upload"], dependencies=[Depends(require_write)])
 async def direct_upload_file(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
@@ -254,7 +216,7 @@ class AnalyzeRequest(BaseModel):
     barrier_failure:  Optional[str] = None
 
 
-@app.post("/api/analyze-report", tags=["Analysis"])
+@app.post("/api/analyze-report", tags=["Analysis"], dependencies=[Depends(require_authenticated)])
 async def analyze_single_report(req: AnalyzeRequest):
     data = req.dict()
     if not data.get("report_text") and data.get("description"):
@@ -346,10 +308,21 @@ async def health():
     return {
         "status": "ok",
         "service": "SafeSense AI API",
-        "version": "1.2.0",
+        "version": "1.3.0",
         "environment": settings.environment,
         "database_backend": "sqlite" if IS_SQLITE else "postgresql",
-        "features": ["risk-analysis", "multilingual-en-kn-hi", "pattern-intelligence", "vector-advisory"],
+        "database": "SQLite (local)" if IS_SQLITE else "PostgreSQL",
+        "features": [
+            "risk-analysis",
+            "sif-precursor-detection",
+            "lsr-classification",
+            "barrier-intelligence",
+            "pattern-intelligence",
+            "multilingual-en-kn-hi",
+            "grounded-copilot",
+            "pii-protection",
+            "vector-advisory",
+        ],
     }
 
 

@@ -9,9 +9,13 @@ from sqlalchemy.orm import Session
 from database import get_db, IS_SQLITE
 from models import Report, Action, Review, UploadedFile
 from services.llm_service import CACHE
+from services.auth import require_authenticated, require_admin
 
 logger = logging.getLogger("safesense.admin")
-router = APIRouter(tags=["Admin & Debug"])
+router = APIRouter(
+    tags=["Admin & Debug"],
+    dependencies=[Depends(require_authenticated)],
+)
 
 LOG_FILE = Path(__file__).resolve().parent.parent / "logs" / "system_logs.jsonl"
 
@@ -51,13 +55,13 @@ from config import settings
 from database import engine
 from services.auth import get_current_user
 
-@router.post("/admin/reset-db", summary="Hard reset database to clean empty state")
-@router.post("/admin/reset-database", summary="Hard reset database to clean empty state")
+@router.post("/admin/reset-db", summary="Hard reset database to clean empty state (Administrator only)")
+@router.post("/admin/reset-database", summary="Hard reset database to clean empty state (Administrator only)")
 def reset_database(
     confirm: bool = False,
     payload: Optional[dict] = None,
     db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user),
+    user=Depends(require_admin),
 ):
     """
     Completely deletes all records from reports, actions, reviews, and uploaded_files tables,
@@ -65,7 +69,7 @@ def reset_database(
     Requires confirmation flag (?confirm=true or body {"confirm": true}).
     Requires Administrator privileges in all environments; permanently blocked in production unless ALLOW_ADMIN_RESET=true.
     """
-    if (user.get("role") or "").lower() != "administrator":
+    if (user.role or "").lower() != "administrator":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access forbidden: Admin reset requires Administrator role.",

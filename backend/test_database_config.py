@@ -276,7 +276,7 @@ class TestAlembicBaselineConsistency(unittest.TestCase):
         # Phase 6 Batch 2 adds report_embeddings (vector-ready, no safety fields)
         self.assertEqual(
             set(Base.metadata.tables.keys()),
-            {"reports", "actions", "reviews", "uploaded_files", "report_embeddings"},
+            {"reports", "actions", "reviews", "uploaded_files", "report_embeddings", "users"},
         )
 
     def test_alembic_baseline_file_exists_and_covers_tables(self):
@@ -339,7 +339,7 @@ class TestAlembicBaselineConsistency(unittest.TestCase):
                 # Phase 6 Batch 2: report_embeddings is part of the migrated schema
                 self.assertEqual(
                     tables,
-                    {"reports", "actions", "reviews", "uploaded_files", "report_embeddings"},
+                    {"reports", "actions", "reviews", "uploaded_files", "report_embeddings", "users"},
                 )
             finally:
                 con.close()

@@ -4,7 +4,7 @@
  * Two upload paths — both send data to the real backend:
  *
  * 1. DIRECT BACKEND UPLOAD (primary, recommended):
- *    POST /api/reports/upload — file sent to FastAPI, analyzed, saved to SQLite.
+ *    POST /api/reports/upload — file sent to FastAPI, analyzed, and persisted to the safety database.
  *    Redirects to /dashboard after success.
  *
  * 2. PREVIEW WIZARD (for users who want to inspect before committing):
@@ -84,7 +84,7 @@ export default function UploadPage() {
       const result = await uploadReportsCSV(file);
       setUploadResult(result);
       window.dispatchEvent(new CustomEvent('safesense:data-updated'));
-      setTimeout(() => navigate('/dashboard'), 2500);
+      setTimeout(() => navigate('/app/dashboard'), 2500);
     } catch (err) {
       setUploadError(
         err instanceof Error
@@ -226,7 +226,7 @@ export default function UploadPage() {
                   <span className="text-xs bg-blue-100 text-blue-700 font-semibold px-2.5 py-0.5 rounded-full border border-blue-200">RECOMMENDED</span>
                 </div>
                 <p className="text-slate-600 text-sm mb-1.5">
-                  File is sent directly to the FastAPI backend. Every row is analyzed and saved to SQLite. Dashboard reflects the new data immediately.
+                  File is sent directly to the FastAPI backend. Every row is analyzed and saved to the safety database. Dashboard reflects the new data immediately.
                 </p>
                 <p className="text-slate-500 text-xs mb-4">
                   File must contain a <code className="bg-slate-200 text-slate-800 px-1 py-0.5 rounded text-xs">description</code> column (or alias: <code className="text-slate-600">report_text</code>, <code className="text-slate-600">observation</code>, <code className="text-slate-600">text</code>).

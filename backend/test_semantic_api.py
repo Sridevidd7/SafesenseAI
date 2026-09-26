@@ -17,6 +17,18 @@ from main import app
 
 
 class TestSemanticApi(unittest.TestCase):
+    """These tests exercise semantic-layer behavior and response contracts, not
+    authentication (covered separately in test_auth_streaming.py). The auth
+    dependency is overridden per-test and removed again in tearDown so the
+    override never leaks into other test modules."""
+
+    def setUp(self):
+        from services.auth import require_authenticated
+        app.dependency_overrides[require_authenticated] = lambda: None
+
+    def tearDown(self):
+        from services.auth import require_authenticated
+        app.dependency_overrides.pop(require_authenticated, None)
 
     def _client(self):
         transport = httpx.ASGITransport(app=app)

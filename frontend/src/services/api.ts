@@ -10,6 +10,7 @@
  */
 
 import { SifHeatmapResponse, SifHeatmapFilter } from '../types';
+import { clearStoredSession, getStoredToken } from './authClient';
 
 // â”€â”€â”€ Response types (mirror backend Pydantic schemas) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -106,7 +107,7 @@ export function getApiUrl(path: string): string {
 function getAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   try {
-    const token = localStorage.getItem('token');
+    const token = getStoredToken();
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
@@ -114,6 +115,14 @@ function getAuthHeaders(): Record<string, string> {
     // ignore
   }
   return headers;
+}
+
+/** Global 401 handling: discard invalid sessions and return to login. */
+function handleUnauthorized(): void {
+  clearStoredSession();
+  if (!window.location.pathname.startsWith('/login')) {
+    window.location.assign('/login?expired=1');
+  }
 }
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -127,6 +136,9 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   if (!res.ok) {
+    if (res.status === 401) {
+      handleUnauthorized();
+    }
     let detail = `HTTP ${res.status}`;
     try {
       const body = await res.json();
@@ -179,7 +191,7 @@ export interface TrendsIntelligenceResponse {
 
 /**
  * GET /api/risk-intelligence/trends
- * Returns time-series monthly trend aggregated in SQLite.
+ * Returns time-series monthly trend aggregated by the backend.
  */
 export async function fetchRiskIntelligenceTrends(): Promise<TrendPoint[]> {
   return apiFetch<TrendPoint[]>('/risk-intelligence/trends');
@@ -192,6 +204,7 @@ export async function fetchRiskIntelligenceTrends(): Promise<TrendPoint[]> {
 export async function fetchTrendsIntelligence(): Promise<TrendsIntelligenceResponse> {
   const authHeaders = getAuthHeaders();
   const res = await fetch(getApiUrl('/risk-intelligence/trends'), { headers: authHeaders });
+  if (res.status === 401) handleUnauthorized();
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
@@ -243,6 +256,7 @@ export async function fetchReports(params?: FetchReportsParams): Promise<Reports
   const authHeaders = getAuthHeaders();
   const res = await fetch(getApiUrl(`/reports${qs}`), { headers: authHeaders });
   if (!res.ok) {
+    if (res.status === 401) handleUnauthorized();
     let detail = `HTTP ${res.status}`;
     try {
       const body = await res.json();
@@ -314,7 +328,7 @@ export async function uploadReportsCSV(file: File): Promise<UploadResult> {
 
   const headers: Record<string, string> = {};
   try {
-    const token = localStorage.getItem('token');
+    const token = getStoredToken();
     if (token) headers['Authorization'] = `Bearer ${token}`;
   } catch {
     // ignore
@@ -327,6 +341,7 @@ export async function uploadReportsCSV(file: File): Promise<UploadResult> {
   });
 
   if (!res.ok) {
+    if (res.status === 401) handleUnauthorized();
     let detail = `HTTP ${res.status}`;
     try {
       const body = await res.json();
@@ -532,6 +547,7 @@ export async function fetchAnalyticsPatterns(): Promise<PatternItem[]> {
 export async function fetchPatternIntelligence(): Promise<PatternIntelligenceEnvelope> {
   const authHeaders = getAuthHeaders();
   const res = await fetch(getApiUrl('/analytics/patterns'), { headers: authHeaders });
+  if (res.status === 401) handleUnauthorized();
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
@@ -597,7 +613,7 @@ export async function fetchDebugCounts(): Promise<DebugCounts> {
 
 /**
  * GET /api/analytics/sif-heatmap
- * Fetches operational SIF risk concentration tree and reports from SQLite.
+ * Fetches operational SIF risk concentration tree and reports from the safety database.
  */
 export async function fetchSifHeatmap(filter?: SifHeatmapFilter): Promise<SifHeatmapResponse> {
   const query = new URLSearchParams();
@@ -665,7 +681,7 @@ export interface CopilotChatResponse {
 
 /**
  * POST /api/copilot/chat
- * Sends user question to backend Safety Copilot grounded on SQLite + Groq.
+ * Sends user question to backend Safety Copilot grounded on the verified safety database (LLM synthesis via Groq).
  */
 export async function sendCopilotMessage(payload: CopilotChatPayload): Promise<CopilotChatResponse> {
   return apiFetch<CopilotChatResponse>('/copilot/chat', {

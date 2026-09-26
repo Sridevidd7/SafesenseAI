@@ -2,34 +2,54 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import {
   Shield, LayoutDashboard, Upload, Brain, TrendingUp, GitBranch,
   MapPin, CheckSquare, MessageSquare, FileText, Settings, Menu, X,
-  LogOut, Bell, ChevronRight, Zap, User
+  LogOut, Bell, ChevronRight, Command, User
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { useState } from 'react';
+import { logoutOnServer, fetchPlatformInfo } from '../services/authClient';
+import { useState, useEffect } from 'react';
 
 const NAV_ITEMS = [
-  { to: '/home', icon: Shield, label: 'Home' },
-  { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/upload', icon: Upload, label: 'Upload Reports' },
-  { to: '/analysis', icon: Brain, label: 'AI Analysis' },
-  { to: '/risk-intelligence', icon: TrendingUp, label: 'Risk Intelligence' },
-  { to: '/patterns', icon: GitBranch, label: 'Safety Patterns' },
-  { to: '/sites', icon: MapPin, label: 'Sites & Activities' },
-  { to: '/actions', icon: CheckSquare, label: 'Action Center' },
-  { to: '/copilot', icon: MessageSquare, label: 'Safety Copilot' },
-  { to: '/reports', icon: FileText, label: 'Reports' },
-  { to: '/command-center', icon: Zap, label: 'Command Center' },
-  { to: '/settings', icon: Settings, label: 'Settings' },
+  { to: '/app/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+  { to: '/app/upload', icon: Upload, label: 'Upload Reports' },
+  { to: '/app/analysis', icon: Brain, label: 'AI Analysis' },
+  { to: '/app/risk-intelligence', icon: TrendingUp, label: 'Risk Intelligence' },
+  { to: '/app/patterns', icon: GitBranch, label: 'Safety Patterns' },
+  { to: '/app/sites', icon: MapPin, label: 'Sites & Activities' },
+  { to: '/app/actions', icon: CheckSquare, label: 'Action Center' },
+  { to: '/app/copilot', icon: MessageSquare, label: 'Safety Copilot' },
+  { to: '/app/reports', icon: FileText, label: 'Reports' },
+  { to: '/app/command-center', icon: Command, label: 'Command Center' },
+  { to: '/app/settings', icon: Settings, label: 'Settings' },
 ];
 
 export default function Layout() {
   const { user, dispatch, sidebarOpen, dataset, isDemo } = useApp();
   const navigate = useNavigate();
   const [notifOpen, setNotifOpen] = useState(false);
+  const [platformLabel, setPlatformLabel] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchPlatformInfo().then(info => {
+      if (info) setPlatformLabel(`${info.database} · ${info.vector_store}`);
+    });
+  }, []);
 
   function handleLogout() {
+    // Server-verified logout first (revocation contract), then local discard.
+    const token = getStoredTokenSafe();
+    if (token) {
+      logoutOnServer(token);
+    }
     dispatch({ type: 'LOGOUT' });
     navigate('/login');
+  }
+
+  function getStoredTokenSafe(): string | null {
+    try {
+      return localStorage.getItem('safesense_token');
+    } catch {
+      return null;
+    }
   }
 
   return (
@@ -57,6 +77,14 @@ export default function Layout() {
         {sidebarOpen && dataset && (
           <div className={`mx-3 mt-3 px-3 py-2 rounded-lg text-xs font-medium ${isDemo ? 'bg-amber-50 border border-amber-200 text-amber-800' : 'bg-green-50 border border-green-200 text-green-800'}`}>
             {isDemo ? '⚠ Demo Data Active' : `✓ ${dataset.rows} reports loaded`}
+          </div>
+        )}
+
+        {/* Platform runtime label — dynamic from backend metadata */}
+        {sidebarOpen && platformLabel && (
+          <div className="mx-3 mt-2 px-3 py-2 rounded-lg text-[11px] font-medium text-slate-500 bg-slate-50 border border-slate-200" title="Runtime platform (from backend metadata)">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5" aria-hidden />
+            {platformLabel}
           </div>
         )}
 

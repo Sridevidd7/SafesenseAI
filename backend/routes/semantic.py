@@ -17,17 +17,19 @@ advisory and is not proof of a safety violation.
 import logging
 from typing import Any, Dict
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from services.pii_service import redact_pii
 from services import semantic_service
+from services.auth import require_authenticated
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/semantic",
     tags=["Semantic Layer (Phase 5)"],
+    dependencies=[Depends(require_authenticated)],
 )
 
 

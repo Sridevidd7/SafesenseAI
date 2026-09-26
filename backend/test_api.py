@@ -1,6 +1,9 @@
 """
 test_api.py — Smoke tests for the upload endpoint.
-Run with: python test_api.py
+Run with: python test_api.py   (requires the dev API server on localhost:8000)
+
+The API now enforces authentication, so these tests first obtain a JWT from
+/api/auth/login (registering a dedicated test account on first run).
 """
 import json
 import urllib.request
@@ -16,8 +19,50 @@ except Exception:
     import pytest
     pytest.skip("Live server http://localhost:8000 is not running; skipping smoke tests", allow_module_level=True)
 
+LIVE_TEST_USER = {
+    "email": "live-test@safesense.dev",
+    "password": "LiveTest123",
+    "name": "Live API Test",
+}
 
-def multipart_upload(url: str, filepath: str, field: str = "file") -> dict:
+_auth_headers_cache: dict | None = None
+
+
+def _auth_headers() -> dict:
+    """Return Authorization headers for the live server, creating the test
+    account on first use (idempotent across runs)."""
+    global _auth_headers_cache
+    if _auth_headers_cache is not None:
+        return _auth_headers_cache
+
+    def _post(path: str, payload: dict) -> dict:
+        req = urllib.request.Request(
+            f"{BASE}{path}",
+            data=json.dumps(payload).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req) as resp:
+            return json.loads(resp.read())
+
+    try:
+        token = _post("/auth/login", {
+            "email": LIVE_TEST_USER["email"],
+            "password": LIVE_TEST_USER["password"],
+        })["token"]
+    except urllib.error.HTTPError:
+        # First run on this dev database — register (bootstrap admin on fresh DB).
+        token = _post("/auth/register", {
+            **LIVE_TEST_USER,
+            "confirm_password": LIVE_TEST_USER["password"],
+            "organization": "SafeSense QA",
+        })["token"]
+
+    _auth_headers_cache = {"Authorization": f"Bearer {token}"}
+    return _auth_headers_cache
+
+
+def multipart_upload(url: str, filepath: str, field: str = "file", headers: dict | None = None) -> dict:
     """
     Upload a file using multipart/form-data via stdlib only (no requests lib).
     """
@@ -41,7 +86,10 @@ def multipart_upload(url: str, filepath: str, field: str = "file") -> dict:
         url,
         data=body,
         method="POST",
-        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        headers={
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            **(headers or {}),
+        },
     )
     with urllib.request.urlopen(req) as resp:
         return json.loads(resp.read())
@@ -52,6 +100,7 @@ def test_upload_valid_csv():
     result = multipart_upload(
         url=f"{BASE}/reports/upload",
         filepath="test_upload.csv",
+        headers=_auth_headers(),
     )
     assert result["processed"] == 10, f"Expected 10, got {result['processed']}"
     assert result["skipped"] == 0
@@ -85,7 +134,7 @@ def test_upload_missing_column():
     with open("bad_columns.csv", "w") as fh:
         fh.write(bad_csv)
     try:
-        multipart_upload(url=f"{BASE}/reports/upload", filepath="bad_columns.csv")
+        multipart_upload(url=f"{BASE}/reports/upload", filepath="bad_columns.csv", headers=_auth_headers())
         print("  FAIL — should have raised 422")
     except urllib.error.HTTPError as exc:
         body = json.loads(exc.read())
@@ -101,7 +150,7 @@ def test_upload_empty_file():
     with open("empty.csv", "w") as fh:
         fh.write("description\n")   # header only, no data rows
     try:
-        multipart_upload(url=f"{BASE}/reports/upload", filepath="empty.csv")
+        multipart_upload(url=f"{BASE}/reports/upload", filepath="empty.csv", headers=_auth_headers())
         print("  FAIL — should have raised 422")
     except urllib.error.HTTPError as exc:
         body = json.loads(exc.read())
@@ -120,7 +169,7 @@ def test_upload_alias_column():
     )
     with open("alias_col.csv", "w") as fh:
         fh.write(alias_csv)
-    result = multipart_upload(url=f"{BASE}/reports/upload", filepath="alias_col.csv")
+    result = multipart_upload(url=f"{BASE}/reports/upload", filepath="alias_col.csv", headers=_auth_headers())
     assert result["processed"] == 2
     assert result["description_column"] == "report_text"
     print("  processed:", result["processed"])
@@ -131,7 +180,8 @@ def test_upload_alias_column():
 
 def test_get_reports_after_upload():
     print("\n=== TEST 5: GET /api/reports returns persisted records ===")
-    with urllib.request.urlopen(f"{BASE}/reports") as resp:
+    req = urllib.request.Request(f"{BASE}/reports", headers=_auth_headers())
+    with urllib.request.urlopen(req) as resp:
         data = json.loads(resp.read())
     print("  total persisted reports:", data["total"])
     assert data["total"] >= 10, "Expected at least 10 reports after uploads"

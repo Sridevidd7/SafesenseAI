@@ -401,3 +401,70 @@ class CopilotChatResponse(BaseModel):
         default=None,
         description="Deterministic grounding metadata: scope, aggregates, filters and patterns backing the answer",
     )
+
+
+# ─── Authentication schemas (Phase 8 — production auth) ─────────────────────
+
+class RegisterRequest(BaseModel):
+    """Body for POST /api/auth/register (account creation)."""
+    name: str = Field(..., min_length=2, max_length=200, description="Full name")
+    email: str = Field(..., max_length=255, description="Work email address")
+    password: str = Field(..., min_length=8, max_length=128, description="Password (min 8 chars, letters + numbers)")
+    confirm_password: str = Field(..., description="Must match password")
+    organization: str | None = Field(None, max_length=200, description="Organization / company (optional)")
+
+
+class LoginRequest(BaseModel):
+    """Body for POST /api/auth/login."""
+    email: str = Field(..., max_length=255)
+    password: str = Field(..., max_length=128)
+
+
+class UserResponse(BaseModel):
+    """Public user shape — NEVER includes the password hash."""
+    id: int
+    email: str
+    name: str
+    role: str
+    organization: str | None = None
+    site: str | None = None
+    is_active: bool = True
+
+
+class AuthResponse(BaseModel):
+    """Response for login / register: user + signed JWT."""
+    token: str = Field(..., description="Bearer JWT")
+    token_type: str = Field("bearer")
+    expires_in_minutes: int = Field(480)
+    user: UserResponse
+
+
+class ForgotPasswordRequest(BaseModel):
+    """Body for POST /api/auth/forgot-password."""
+    email: str = Field(..., max_length=255)
+
+
+class ForgotPasswordResponse(BaseModel):
+    """Uniform response regardless of account existence (no account enumeration)."""
+    message: str = Field(
+        "If an account exists for that address, a password reset link has been sent.",
+    )
+    # ONLY populated when SAFESENSE_DEV_EXPOSE_RESET_TOKEN=1 AND no email
+    # provider is configured (explicit local-development escape hatch).
+    # Always None in production.
+    dev_reset_token: str | None = None
+
+
+class ResetPasswordRequest(BaseModel):
+    """Body for POST /api/auth/reset-password."""
+    token: str = Field(..., min_length=16, description="Reset token from the email link")
+    password: str = Field(..., min_length=8, max_length=128)
+    confirm_password: str = Field(...)
+
+
+class PlatformInfoResponse(BaseModel):
+    """Non-sensitive runtime/platform metadata for UI labels."""
+    database: str = Field(..., description="e.g. 'PostgreSQL' or 'SQLite (local)' — never credentials")
+    vector_store: str = Field(..., description="e.g. 'pgvector' or 'Unavailable'")
+    environment: str = Field(..., description="'production' | 'development' | 'local'")
+    version: str = Field(...)

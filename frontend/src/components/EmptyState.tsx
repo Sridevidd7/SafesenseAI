@@ -22,7 +22,7 @@ export default function EmptyState({
       <h3 className="text-xl font-bold text-slate-900 mb-2">{title}</h3>
       <p className="text-slate-500 max-w-md mb-6 text-sm leading-relaxed">{message}</p>
       {showActions && (
-        <button onClick={() => navigate('/upload')} className="btn-primary">
+        <button onClick={() => navigate('/app/upload')} className="btn-primary">
           <Upload className="w-4 h-4" />
           Upload Dataset
         </button>

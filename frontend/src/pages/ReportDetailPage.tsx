@@ -73,7 +73,7 @@ export default function ReportDetailPage() {
       const data = await fetchReviewsByReport(numericReportId);
       setReviews(data);
     } catch {
-      // If report not yet in SQLite or has no reviews, keep empty array
+      // If report has no reviews yet, keep empty array
       setReviews([]);
     } finally {
       setLoadingReviews(false);
@@ -135,7 +135,7 @@ export default function ReportDetailPage() {
 
   if (!report) return (
     <div className="p-6">
-      <button onClick={() => navigate('/reports')} className="btn-secondary text-sm mb-4"><ArrowLeft className="w-4 h-4" />Back</button>
+      <button onClick={() => navigate('/app/reports')} className="btn-secondary text-sm mb-4"><ArrowLeft className="w-4 h-4" />Back</button>
       <div className="card text-slate-500">Report not found.</div>
     </div>
   );
@@ -144,7 +144,7 @@ export default function ReportDetailPage() {
 
   return (
     <div className="p-6 max-w-5xl mx-auto animate-in">
-      <button onClick={() => navigate('/reports')} className="btn-secondary text-sm mb-5"><ArrowLeft className="w-4 h-4" />Back to Reports</button>
+      <button onClick={() => navigate('/app/reports')} className="btn-secondary text-sm mb-5"><ArrowLeft className="w-4 h-4" />Back to Reports</button>
 
       <div className="grid lg:grid-cols-3 gap-5">
         {/* Main column */}

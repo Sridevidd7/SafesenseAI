@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from datetime import datetime, timezone
 from schemas import ReportCreate, ReportResponse, ReportListResponse, UploadResponse, MetaInfo
+from services.auth import require_authenticated, require_write
 import services.report_service as svc
 import services.upload_service as upload_svc
 import services.analytics_service as analytics_svc
@@ -44,6 +45,7 @@ def _build_meta(total_reports: int) -> MetaInfo:
 def create_report(
     payload: ReportCreate,
     db: Session = Depends(get_db),
+    user=Depends(require_write),
 ) -> ReportResponse:
     report = svc.create_report(db, payload)
     total = analytics_svc.get_total_reports(db)
@@ -89,6 +91,7 @@ def list_reports(
     limit: Optional[int] = None,
     offset: Optional[int] = None,
     db: Session = Depends(get_db),
+    user=Depends(require_authenticated),
 ) -> ReportListResponse:
     reports, total = svc.get_all_reports(
         db,
@@ -115,6 +118,7 @@ def list_reports(
 def get_report(
     report_id: str,
     db: Session = Depends(get_db),
+    user=Depends(require_authenticated),
 ) -> ReportResponse:
     report = svc.get_report_by_id(db, report_id)
     if report is None:
@@ -162,6 +166,7 @@ from services.risk_engine import analyze_report
 async def explain_report(
     report_id: str,
     db: Session = Depends(get_db),
+    user=Depends(require_authenticated),
 ):
     report = svc.get_report_by_id(db, report_id)
     if report is None:
@@ -197,6 +202,7 @@ async def explain_report(
 )
 async def explain_custom_report(
     payload: dict,
+    user=Depends(require_authenticated),
 ):
     explanation = await generate_llm_explanation(payload)
     return explanation
@@ -235,6 +241,7 @@ async def upload_csv(
         description="CSV or Excel file with a 'description' column",
     ),
     db: Session = Depends(get_db),
+    user=Depends(require_write),
 ) -> UploadResponse:
     # ── Validate filename extension ───────────────────────────────────────────
     filename = file.filename or "upload"

@@ -144,7 +144,7 @@ export default function CommandCenterPage() {
               High-Priority Observations ({data.high_priority_reports.length})
             </h2>
             <button
-              onClick={() => navigate('/risk-intelligence')}
+              onClick={() => navigate('/app/risk-intelligence')}
               className="text-xs font-semibold text-blue-600 hover:text-blue-800 flex items-center gap-1"
             >
               Risk Intelligence <ArrowRight className="w-3 h-3" />
@@ -155,7 +155,7 @@ export default function CommandCenterPage() {
               <div
                 key={report.report_id || report.id}
                 className="card p-5 cursor-pointer hover:border-slate-300 transition-all border-red-200 bg-red-50/30"
-                onClick={() => navigate('/ai-analysis')}
+                onClick={() => navigate('/app/analysis')}
               >
                 <div className="flex items-center gap-2 mb-2">
                   <RiskBadge level={(report.risk_level as any) || 'CRITICAL'} size="sm" />
@@ -183,7 +183,7 @@ export default function CommandCenterPage() {
               High-Risk Facilities
             </h2>
             <button
-              onClick={() => navigate('/sites')}
+              onClick={() => navigate('/app/sites')}
               className="text-xs font-semibold text-blue-600 hover:text-blue-800 flex items-center gap-1"
             >
               View All <ArrowRight className="w-3 h-3" />
@@ -194,7 +194,7 @@ export default function CommandCenterPage() {
               <div
                 key={site.site}
                 className="flex items-center gap-3 p-3 rounded-lg hover:bg-slate-50 border border-transparent hover:border-slate-200 cursor-pointer transition-colors"
-                onClick={() => navigate('/sites')}
+                onClick={() => navigate('/app/sites')}
               >
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-0.5">
@@ -228,7 +228,7 @@ export default function CommandCenterPage() {
               Active Safety Precursors
             </h2>
             <button
-              onClick={() => navigate('/patterns')}
+              onClick={() => navigate('/app/patterns')}
               className="text-xs font-semibold text-blue-600 hover:text-blue-800 flex items-center gap-1"
             >
               View All <ArrowRight className="w-3 h-3" />
@@ -266,7 +266,7 @@ export default function CommandCenterPage() {
             Active Corrective Actions
           </h2>
           <button
-            onClick={() => navigate('/actions')}
+            onClick={() => navigate('/app/actions')}
             className="text-xs font-semibold text-blue-600 hover:text-blue-800 flex items-center gap-1"
           >
             Manage All <ArrowRight className="w-3 h-3" />

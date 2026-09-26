@@ -192,9 +192,9 @@ export default function DashboardPage() {
         </div>
         <h2 className="text-lg font-bold text-slate-900">No Safety Records Available</h2>
         <p className="text-slate-500 text-xs leading-relaxed max-w-sm">
-          No observations currently stored in the SQLite safety database. Upload an HSE incident or near-miss dataset to generate real-time safety intelligence.
+          No observations currently stored in the safety database. Upload an HSE incident or near-miss dataset to generate real-time safety intelligence.
         </p>
-        <button onClick={() => navigate('/upload')} className="btn-primary text-xs">
+        <button onClick={() => navigate('/app/upload')} className="btn-primary text-xs">
           <Zap className="w-4 h-4" /> Upload Safety Reports
         </button>
       </div>
@@ -219,7 +219,7 @@ export default function DashboardPage() {
           <div className="flex items-center gap-2.5 mb-1">
             <h1 className="section-title">Safety Intelligence Dashboard</h1>
             <span className="text-[11px] font-bold bg-blue-100 text-blue-800 px-2.5 py-0.5 rounded-full border border-blue-200">
-              Live SQLite Data
+              Live Safety Database
             </span>
           </div>
           <p className="section-sub">
@@ -239,7 +239,7 @@ export default function DashboardPage() {
             <span>{refreshing ? 'Refreshing...' : 'Refresh'}</span>
           </button>
 
-          <button onClick={() => navigate('/upload')} className="btn-primary text-xs">
+          <button onClick={() => navigate('/app/upload')} className="btn-primary text-xs">
             <Zap className="w-3.5 h-3.5" />
             <span>Upload Reports</span>
           </button>
@@ -254,7 +254,7 @@ export default function DashboardPage() {
           subtext="Verified stored records"
           icon={Shield}
           variant="blue"
-          onClick={() => navigate('/reports')}
+          onClick={() => navigate('/app/reports')}
         />
 
         <KpiCard
@@ -264,7 +264,7 @@ export default function DashboardPage() {
           icon={AlertOctagon}
           variant="red"
           badge="SIF: YES"
-          onClick={() => navigate('/reports')}
+          onClick={() => navigate('/app/reports')}
         />
 
         <KpiCard
@@ -274,7 +274,7 @@ export default function DashboardPage() {
           icon={Zap}
           variant="orange"
           badge="SEVERITY"
-          onClick={() => navigate('/reports')}
+          onClick={() => navigate('/app/reports')}
         />
 
         <KpiCard
@@ -284,7 +284,7 @@ export default function DashboardPage() {
           icon={GitBranch}
           variant="indigo"
           badge="CLUSTERS"
-          onClick={() => navigate('/patterns')}
+          onClick={() => navigate('/app/patterns')}
         />
 
         <KpiCard
@@ -294,7 +294,7 @@ export default function DashboardPage() {
           icon={Repeat}
           variant="amber"
           badge="REPEATED"
-          onClick={() => navigate('/patterns')}
+          onClick={() => navigate('/app/patterns')}
         />
 
         <KpiCard
@@ -304,7 +304,7 @@ export default function DashboardPage() {
           icon={TrendingUp}
           variant={trendStatus === 'RISING RISK' ? 'red' : trendStatus === 'IMPROVING' ? 'emerald' : 'slate'}
           badge="TRAJECTORY"
-          onClick={() => navigate('/risk-intelligence')}
+          onClick={() => navigate('/app/risk-intelligence')}
         />
       </div>
 
@@ -317,7 +317,7 @@ export default function DashboardPage() {
               Real-Time AI Safety Intelligence Highlights
             </h2>
             <button
-              onClick={() => navigate('/patterns')}
+              onClick={() => navigate('/app/patterns')}
               className="text-xs font-bold text-blue-600 hover:text-blue-800 inline-flex items-center gap-1"
             >
               View All Insights <ArrowRight className="w-3 h-3" />
@@ -333,7 +333,7 @@ export default function DashboardPage() {
               return (
                 <div
                   key={idx}
-                  onClick={() => navigate(isRecurring ? '/patterns' : '/risk-intelligence')}
+                  onClick={() => navigate(isRecurring ? '/app/patterns' : '/app/risk-intelligence')}
                   className={`p-3.5 rounded-xl border text-xs cursor-pointer transition-all hover:shadow-xs flex items-start gap-3 ${
                     isAnomaly
                       ? 'bg-red-50/70 border-red-200 text-red-950'
@@ -601,7 +601,7 @@ export default function DashboardPage() {
 
       {/* Audit Source Footer */}
       <div className="text-center py-2 text-xs text-slate-400">
-        SafeSense AI Platform · Sourced live from SQLite safety database · {stats.total_reports} total records analyzed
+        SafeSense AI Platform · Sourced live from the verified safety database · {stats.total_reports} total records analyzed
       </div>
     </div>
   );

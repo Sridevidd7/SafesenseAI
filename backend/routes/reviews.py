@@ -14,12 +14,14 @@ import logging
 from database import get_db
 from models import Review, Report
 from schemas import ReviewCreate, ReviewResponse
+from services.auth import require_authenticated, require_write
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/reviews",
     tags=["Reviews"],
+    dependencies=[Depends(require_authenticated)],
 )
 
 VALID_DECISIONS = {"CONFIRMED", "CORRECTED", "REJECTED"}
@@ -46,6 +48,7 @@ def _normalize_decision(decision_str: str) -> str:
 def create_review(
     payload: ReviewCreate,
     db: Session = Depends(get_db),
+    user=Depends(require_write),
 ) -> ReviewResponse:
     # ── 1. Validate report exists in DB ──────────────────────────────────────
     report = db.query(Report).filter(Report.id == payload.report_id).first()

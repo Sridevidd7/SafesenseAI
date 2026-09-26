@@ -31,9 +31,11 @@ from schemas import (
     MetaInfo,
 )
 import services.analytics_service as analytics_svc
+from services.auth import require_authenticated
 
 router = APIRouter(
     tags=["Dashboard & Intelligence"],
+    dependencies=[Depends(require_authenticated)],
 )
 
 
